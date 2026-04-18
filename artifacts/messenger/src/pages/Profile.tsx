@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { getProfile, logout } from "@/auth";
 
@@ -9,13 +9,97 @@ export default function Profile() {
   const [phoneVisible, setPhoneVisible] = useState(false);
   const profile = getProfile();
 
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(profile?.name || "");
+  const [editAvatar, setEditAvatar] = useState(profile?.avatar || "");
+  const [toast, setToast] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
   function handleLogout() {
     logout();
     navigate("/login");
   }
 
+  function handleSaveEdit() {
+    if (!editName.trim()) return;
+    const updated = { ...(profile!), name: editName.trim(), avatar: editAvatar };
+    localStorage.setItem("makswim_profile", JSON.stringify(updated));
+    setEditing(false);
+    showToast("Профиль сохранён");
+    window.location.reload();
+  }
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  }
+
+  function handleAvatarFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setEditAvatar(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#10131a", color: "#e1e2eb" }}>
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl"
+          style={{ background: "#46eedd" }}>
+          {toast}
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
+          onClick={() => setEditing(false)}>
+          <div className="w-full max-w-lg rounded-t-[2rem] p-6 flex flex-col gap-5"
+            style={{ background: "#1d2026" }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-[18px] font-bold">Редактировать профиль</h2>
+              <button onClick={() => setEditing(false)} className="text-[#bacac6]/50 hover:text-[#bacac6]">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="flex flex-col items-center gap-2">
+              <div className="relative">
+                <div className="w-24 h-24 rounded-[1.5rem] overflow-hidden">
+                  {editAvatar
+                    ? <img alt="avatar" src={editAvatar} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
+                        <span className="material-symbols-outlined text-[#bacac6] text-[32px]">person</span>
+                      </div>}
+                </div>
+                <button onClick={() => fileRef.current?.click()}
+                  className="absolute -bottom-1 -right-1 w-8 h-8 bg-[#46eedd] text-[#003732] rounded-xl flex items-center justify-center active:scale-90">
+                  <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+                </button>
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarFile} />
+              </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <label className="text-[11px] font-extrabold tracking-[0.15em] uppercase text-[#bacac6]/60">Имя</label>
+              <input
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                className="w-full bg-[#10131a] text-[#e1e2eb] px-4 py-4 rounded-2xl text-[16px] outline-none"
+                style={{ caretColor: "#46eedd" }}
+              />
+            </div>
+            <button onClick={handleSaveEdit}
+              className="w-full py-4 rounded-2xl font-bold text-[16px] text-[#003732] transition-all active:scale-95"
+              style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
+              Сохранить
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="fixed top-[-10%] right-[-10%] w-[50%] h-[50%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(120px)" }} />
 
@@ -60,7 +144,8 @@ export default function Profile() {
                 />
               )}
             </div>
-            <button className="absolute bottom-1 -right-1 w-9 h-9 bg-[#46eedd] text-[#003732] flex items-center justify-center rounded-2xl shadow-xl hover:scale-110 active:scale-95 transition-all">
+            <button onClick={() => setEditing(true)}
+              className="absolute bottom-1 -right-1 w-9 h-9 bg-[#46eedd] text-[#003732] flex items-center justify-center rounded-2xl shadow-xl hover:scale-110 active:scale-95 transition-all">
               <span className="material-symbols-outlined text-[18px]">edit</span>
             </button>
           </div>

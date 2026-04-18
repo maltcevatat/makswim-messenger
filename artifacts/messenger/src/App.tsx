@@ -10,6 +10,8 @@ import Profile from "@/pages/Profile";
 import Calendar from "@/pages/Calendar";
 import Members from "@/pages/Members";
 import Admin from "@/pages/Admin";
+import Calls from "@/pages/Calls";
+import Settings from "@/pages/Settings";
 
 const queryClient = new QueryClient();
 
@@ -47,6 +49,12 @@ function Router() {
       </Route>
       <Route path="/admin">
         <AuthGuard><Admin /></AuthGuard>
+      </Route>
+      <Route path="/calls">
+        <AuthGuard><Calls /></AuthGuard>
+      </Route>
+      <Route path="/settings">
+        <AuthGuard><Settings /></AuthGuard>
       </Route>
       <Route>
         <AuthGuard><ChatsList /></AuthGuard>

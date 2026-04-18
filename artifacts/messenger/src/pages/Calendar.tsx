@@ -8,27 +8,69 @@ const calendarDays = [
   { n: 26, prev: true }, { n: 27, prev: true }, { n: 28, prev: true },
   { n: 29, prev: true }, { n: 30, prev: true }, { n: 31, prev: true },
   { n: 1, dot: true, border: true },
-  { n: 2 }, { n: 3, active: true }, { n: 4, dot: true },
+  { n: 2 }, { n: 3, dot: true }, { n: 4, dot: true },
   { n: 5 }, { n: 6, dot: true }, { n: 7 }, { n: 8 },
   { n: 9, dot: true }, { n: 10 }, { n: 11, dot: true },
   { n: 12 }, { n: 13 }, { n: 14, dot: true }, { n: 15 },
 ];
 
-const events = [
-  { id: 1, icon: "pool", title: "Командный заплыв", time: "7:00 — 8:30", status: "joined", color: "primary" },
-  { id: 2, icon: "pedal_bike", title: "Велотренировка", time: "18:00 — 19:30", status: "confirmed", color: "secondary" },
-  { id: 3, icon: "fitness_center", title: "Силовая сессия", time: "20:00 — 21:00", status: "joined", color: "muted" },
-];
+const ALL_EVENTS: Record<number, { id: number; icon: string; title: string; time: string; color: string }[]> = {
+  1: [{ id: 1, icon: "pool", title: "Открытая вода", time: "6:30 — 8:00", color: "primary" }],
+  3: [
+    { id: 1, icon: "pool", title: "Командный заплыв", time: "7:00 — 8:30", color: "primary" },
+    { id: 2, icon: "pedal_bike", title: "Велотренировка", time: "18:00 — 19:30", color: "secondary" },
+    { id: 3, icon: "fitness_center", title: "Силовая сессия", time: "20:00 — 21:00", color: "muted" },
+  ],
+  4: [{ id: 1, icon: "directions_run", title: "Пробежка", time: "7:00 — 8:00", color: "muted" }],
+  6: [{ id: 1, icon: "pool", title: "Плавание", time: "9:00 — 10:30", color: "primary" }],
+  9: [{ id: 1, icon: "fitness_center", title: "Силовая", time: "19:00 — 20:30", color: "muted" }],
+  11: [
+    { id: 1, icon: "pedal_bike", title: "Велозаезд", time: "8:00 — 11:00", color: "secondary" },
+    { id: 2, icon: "pool", title: "Бассейн", time: "18:00 — 19:30", color: "primary" },
+  ],
+  14: [{ id: 1, icon: "directions_run", title: "Длинный бег", time: "7:30 — 9:00", color: "muted" }],
+};
 
 export default function Calendar() {
   const [, navigate] = useLocation();
   const [selectedDay, setSelectedDay] = useState(3);
+  const [month, setMonth] = useState("Сентябрь 2024");
+  const [joined, setJoined] = useState<Set<string>>(new Set(["3-1", "3-3"]));
+  const [toast, setToast] = useState("");
   const profile = getProfile();
+
+  const events = ALL_EVENTS[selectedDay] || [];
+
+  function toggleJoin(eventId: number) {
+    const key = `${selectedDay}-${eventId}`;
+    const next = new Set(joined);
+    if (next.has(key)) {
+      next.delete(key);
+      showToast("Отменено участие");
+    } else {
+      next.add(key);
+      showToast("Участие подтверждено!");
+    }
+    setJoined(next);
+  }
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  }
 
   return (
     <div className="min-h-screen pb-28" style={{ background: "#10131a", color: "#e1e2eb" }}>
       <div className="fixed top-[-10%] right-[-10%] w-[50%] h-[50%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(120px)" }} />
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl transition-all"
+          style={{ background: "#46eedd" }}>
+          {toast}
+        </div>
+      )}
 
       {/* Header */}
       <header className="fixed top-0 w-full z-50 border-b border-white/5"
@@ -50,7 +92,7 @@ export default function Calendar() {
               MAKSWIM
             </span>
           </div>
-          <button className="p-2 rounded-full hover:bg-[#272a31] transition-colors">
+          <button className="p-2 rounded-full hover:bg-[#272a31] transition-colors active:scale-90">
             <span className="material-symbols-outlined text-[#46eedd]">search</span>
           </button>
         </div>
@@ -59,12 +101,16 @@ export default function Calendar() {
       <main className="pt-20 px-5 max-w-lg mx-auto">
         {/* Month header */}
         <div className="flex items-center justify-between my-5 px-1">
-          <h1 className="text-[1.5rem] font-extrabold tracking-tight">Сентябрь 2024</h1>
+          <h1 className="text-[1.5rem] font-extrabold tracking-tight">{month}</h1>
           <div className="flex gap-2">
-            <button className="w-9 h-9 flex items-center justify-center bg-[#1d2026] rounded-xl text-[#46eedd] hover:bg-[#272a31] transition-colors">
+            <button
+              onClick={() => setMonth("Август 2024")}
+              className="w-9 h-9 flex items-center justify-center bg-[#1d2026] rounded-xl text-[#46eedd] hover:bg-[#272a31] transition-colors active:scale-90">
               <span className="material-symbols-outlined text-lg">chevron_left</span>
             </button>
-            <button className="w-9 h-9 flex items-center justify-center bg-[#1d2026] rounded-xl text-[#46eedd] hover:bg-[#272a31] transition-colors">
+            <button
+              onClick={() => setMonth("Октябрь 2024")}
+              className="w-9 h-9 flex items-center justify-center bg-[#1d2026] rounded-xl text-[#46eedd] hover:bg-[#272a31] transition-colors active:scale-90">
               <span className="material-symbols-outlined text-lg">chevron_right</span>
             </button>
           </div>
@@ -82,23 +128,17 @@ export default function Calendar() {
               <button
                 key={i}
                 onClick={() => !day.prev && setSelectedDay(day.n)}
+                disabled={!!day.prev}
                 className={`aspect-square flex flex-col items-center justify-center text-[13px] font-medium rounded-2xl transition-all relative
-                  ${day.prev ? "opacity-20 cursor-default" : "cursor-pointer"}
-                  ${!day.prev && (day.active || selectedDay === day.n)
-                    ? "font-bold"
-                    : day.border && selectedDay !== day.n
-                      ? "border border-[#46eedd]/20 bg-[#272a31]"
-                      : !day.prev
-                        ? "bg-[#272a31] hover:bg-[#32353c]"
-                        : ""
-                  }
+                  ${day.prev ? "opacity-20 cursor-default" : "cursor-pointer active:scale-90"}
+                  ${!day.prev && selectedDay === day.n ? "font-bold" : !day.prev ? "bg-[#272a31] hover:bg-[#32353c]" : ""}
                 `}
-                style={!day.prev && (day.active || selectedDay === day.n)
+                style={!day.prev && selectedDay === day.n
                   ? { background: "#46eedd", color: "#003732", boxShadow: "0 6px 18px rgba(70,238,221,0.3)" }
                   : {}}
               >
                 {day.n}
-                {day.dot && !(day.active || selectedDay === day.n) && !day.prev && (
+                {day.dot && selectedDay !== day.n && !day.prev && (
                   <span className="absolute bottom-1.5 w-1 h-1 bg-[#46eedd] rounded-full" />
                 )}
               </button>
@@ -111,44 +151,62 @@ export default function Calendar() {
           <div className="flex items-center justify-between mb-4 px-1">
             <div>
               <h2 className="text-[1.2rem] font-bold">Выбранный день</h2>
-              <p className="text-[#bacac6]/60 text-xs mt-0.5">Вторник, {selectedDay} сентября</p>
+              <p className="text-[#bacac6]/60 text-xs mt-0.5">
+                {["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"][selectedDay % 7]}, {selectedDay} сентября
+              </p>
             </div>
-            <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase"
-              style={{ background: "rgba(70,238,221,0.1)", color: "#46eedd" }}>
-              {events.length} события
-            </span>
+            {events.length > 0 && (
+              <span className="px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase"
+                style={{ background: "rgba(70,238,221,0.1)", color: "#46eedd" }}>
+                {events.length} {events.length === 1 ? "событие" : events.length < 5 ? "события" : "событий"}
+              </span>
+            )}
           </div>
-          <div className="space-y-3">
-            {events.map(ev => (
-              <div key={ev.id} className="bg-[#1d2026] p-4 rounded-3xl flex items-center gap-4">
-                <div className={`w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center`}
-                  style={{
-                    background: ev.color === "primary"
-                      ? "linear-gradient(135deg, #46eedd, #00d1c1)"
-                      : ev.color === "secondary"
-                        ? "rgba(52,61,150,0.6)"
-                        : "#32353c",
-                    color: ev.color === "primary" ? "#003732" : ev.color === "secondary" ? "#a8afff" : "#859491"
-                  }}>
-                  <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>{ev.icon}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
-                  <div className="flex items-center gap-1 text-[#bacac6]/60 text-[11px] mt-0.5">
-                    <span className="material-symbols-outlined text-[12px]">schedule</span>
-                    <span>{ev.time}</span>
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <span className="material-symbols-outlined text-[40px] text-[#bacac6]/20">event_busy</span>
+              <p className="text-[#bacac6]/40 text-[14px]">На этот день событий нет</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {events.map(ev => {
+                const key = `${selectedDay}-${ev.id}`;
+                const isJoined = joined.has(key);
+                return (
+                  <div key={ev.id} className="bg-[#1d2026] p-4 rounded-3xl flex items-center gap-4">
+                    <div className="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center"
+                      style={{
+                        background: ev.color === "primary"
+                          ? "linear-gradient(135deg, #46eedd, #00d1c1)"
+                          : ev.color === "secondary"
+                            ? "rgba(52,61,150,0.6)"
+                            : "#32353c",
+                        color: ev.color === "primary" ? "#003732" : ev.color === "secondary" ? "#a8afff" : "#859491"
+                      }}>
+                      <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>{ev.icon}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
+                      <div className="flex items-center gap-1 text-[#bacac6]/60 text-[11px] mt-0.5">
+                        <span className="material-symbols-outlined text-[12px]">schedule</span>
+                        <span>{ev.time}</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => toggleJoin(ev.id)}
+                      className={`shrink-0 px-4 py-2 rounded-full text-[11px] font-bold transition-all active:scale-90 ${
+                        isJoined
+                          ? "text-[#003732]"
+                          : "text-[#bacac6]/60 border border-[#bacac6]/20 hover:border-[#46eedd]/30"
+                      }`}
+                      style={isJoined ? { background: "#46eedd", boxShadow: "0 4px 12px rgba(70,238,221,0.25)" } : {}}>
+                      {isJoined ? "Участвую" : "Записаться"}
+                    </button>
                   </div>
-                </div>
-                {ev.status === "joined" ? (
-                  <button className="shrink-0 bg-[#46eedd] px-4 py-2 rounded-full text-[#003732] text-[11px] font-bold active:scale-95 transition-transform">
-                    Участвую
-                  </button>
-                ) : (
-                  <span className="shrink-0 text-[#bacac6]/50 text-[11px] font-bold">Подтверждено</span>
-                )}
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </section>
 
         {/* Coach note */}
@@ -170,7 +228,9 @@ export default function Calendar() {
                   "Не забывайте фокусироваться на вращении корпуса во время утренней тренировки. Восстановление — залог успеха."
                 </p>
               </div>
-              <button className="w-11 h-11 flex items-center justify-center rounded-full bg-[#272a31] text-[#46eedd] hover:bg-[#46eedd] hover:text-[#003732] transition-all">
+              <button
+                onClick={() => navigate("/chat/coach")}
+                className="w-11 h-11 flex items-center justify-center rounded-full bg-[#272a31] text-[#46eedd] hover:bg-[#46eedd] hover:text-[#003732] transition-all active:scale-90">
                 <span className="material-symbols-outlined text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>chat_bubble</span>
               </button>
             </div>
@@ -178,26 +238,25 @@ export default function Calendar() {
         </section>
       </main>
 
-      {/* Bottom Nav (4-tab) */}
+      {/* Bottom Nav */}
       <nav className="fixed bottom-0 w-full z-50 border-t border-white/5"
         style={{ background: "rgba(16,19,26,0.96)", backdropFilter: "blur(24px)" }}>
         <div className="flex justify-around items-center px-4 pt-3 pb-7 max-w-lg mx-auto">
-          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
+          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
             <span className="material-symbols-outlined text-[22px]">chat_bubble</span>
             <span className="text-[9px] font-extrabold tracking-widest uppercase">Чаты</span>
           </button>
-          <button className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
+          <button onClick={() => navigate("/calls")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
             <span className="material-symbols-outlined text-[22px]">videocam</span>
             <span className="text-[9px] font-extrabold tracking-widest uppercase">Звонки</span>
           </button>
-          {/* Календарь — active */}
           <div className="flex flex-col items-center gap-1">
             <div className="w-14 h-9 rounded-2xl flex items-center justify-center" style={{ background: "#46eedd" }}>
               <span className="material-symbols-outlined text-[#003732] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_today</span>
             </div>
             <span className="text-[9px] font-extrabold tracking-widest uppercase text-[#46eedd]">Календарь</span>
           </div>
-          <button className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
+          <button onClick={() => navigate("/settings")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
             <span className="material-symbols-outlined text-[22px]">settings</span>
             <span className="text-[9px] font-extrabold tracking-widest uppercase">Настройки</span>
           </button>
