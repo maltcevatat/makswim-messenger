@@ -1,64 +1,29 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { api } from "@/api";
+import { useAuth } from "@/context/AuthContext";
+import BottomNav from "@/components/BottomNav";
 
-const MEMBERS_DATA = [
-  {
-    id: "alex",
-    name: "Александр Альфа",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuA1w2dRctOyJv-MjEIDAiefLVahpBwOqdag3i6WbRgG0FUB20F6LhO7G4_NBMAC-kEjy5MCNQ0o172VYrAfDtSvqkIkfAHoitcUisBUit1ZMB6kbnQ7FeuHOemCOBV8VspuM3PYdbFlS6wQ8FFLibc0SxdH99jvnDxj2pw3js_WwBUkmWbBzX4nYIePv1_QusKuxu2Kr37aDRUkyhg_qnZd7pWBATv10a0nOzDOY1dmniZyeaho4czwFLmEUbrc6VkZmczeZ09GVH9x",
-    status: "В сети",
-    online: true,
-    admin: true,
-  },
-  {
-    id: "maria",
-    name: "Мария Волкова",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuBcueFjTeLysVx9byEKIsbBAi6RY3T1fNK1wchb1jfMrRciUjcNmZjpBNeiXUERERR6VHm8v6DD14R1TuBDj2jYW5T0-wpk5GjjFmS80wRnuPdrqAd1BoSDCzctAQRkc2Kmp9MW2vkuoBa3--5MJUiQK4nJvswLzAo1hAe6Lr1uu7cW8246TqbyXc8RfSHYwvEpuoGjMt-eVZatmX66t_Jabu3rN5o9gZ6RefculesuDW1oIMcKVTLE92AGs9CvTMpqGZOrzrJSxt-m",
-    status: "Печатает...",
-    online: true,
-    admin: false,
-    typing: true,
-  },
-  {
-    id: "dmitry",
-    name: "Дмитрий Соколов",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuAvHomBzFiUJaqwnOl1kKiH35-BFiakGFqU9Pxp5HIzjgSVCmFNTW_AM_9bAl9shr66Fz3lvuyakoShvQtXw-V7_LrfKuRW-XG2cI5SIqnnh-NllR4fdRJDc3PfyfsWf5hjAAG_9FRtiINqSGlklXOhkOFnXXKuRapR51N708sy6i6g4ys_k1RTbn-idgwWwxwPhBTfG61zxROM01JosehjahnjdZZyGCb5ruu8f3BaekEFzBKIfsdi0RMC0FVaVEXi39rdkqnVQ7fK",
-    status: "Был(а) в 14:32",
-    online: false,
-    admin: false,
-  },
-  {
-    id: "elena",
-    name: "Елена Громова",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuDn23xiqMIp93GJzp7Sd6-gC8QoYrq1PfYnLROIh8dWXAt_WY7tUvp6XuUhmYHnKtpGzYiKViWA8WMLfO8rfkc8muDV_Gq-XTxHtAPk2hud8n0EJ9hdOaOkEyHJzgsPjLrNENRytAhhuJ1dJfr1jZhM13dhicZGvIxpXcfJJK2oem16XPqzXkWzSfzWVe-cdUjRJdpqcHTRt8zIv72gSQm2xAT6Sk5Lt9EWM8DQnK1CruiqP_C3HayTkj4Nr9LQ3ksGcdMBXyEKS7pw",
-    status: "В сети",
-    online: true,
-    admin: false,
-  },
-  {
-    id: "ivan",
-    name: "Иван Карелин",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuCVuH-h8usX1oEMwD0dy2q8qpyQZDpxizl684KF8m0khFG5vk-jL1GL_WjhOL-CSTeC7vei2vAKT3h803jFxZ7nc2WC2GEF5YgQV7O77SZjFM40ZDg4DaG1N3Hfj95wPBZnDJ-8eWUFBBpwx3M5RWkQRfvCkmv6xo4zUjkUxyb2kwrkEPkyxUGTahm82dGQ7XTNScy_tIOZvD0ifUYoizsaNr8rZbUxMglxa2xCjNMIYgiXB8Zg1Fzqi7Vu5mO4qZ26ekpEJJcTzI_w",
-    status: "Был(а) вчера",
-    online: false,
-    admin: false,
-  },
-  {
-    id: "artem",
-    name: "Артем Белов",
-    avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuCVuH-h8usX1oEMwD0dy2q8qpyQZDpxizl684KF8m0khFG5vk-jL1GL_WjhOL-CSTeC7vei2vAKT3h803jFxZ7nc2WC2GEF5YgQV7O77SZjFM40ZDg4DaG1N3Hfj95wPBZnDJ-8eWUFBBpwx3M5RWkQRfvCkmv6xo4zUjkUxyb2kwrkEPkyxUGTahm82dGQ7XTNScy_tIOZvD0ifUYoizsaNr8rZbUxMglxa2xCjNMIYgiXB8Zg1Fzqi7Vu5mO4qZ26ekpEJJcTzI_w",
-    status: "В сети",
-    online: true,
-    admin: false,
-  },
-];
+interface Member {
+  id: string;
+  name: string;
+  avatar_url: string;
+  role: string;
+  created_at: string;
+}
 
 export default function Members() {
   const [, navigate] = useLocation();
+  const { user: me } = useAuth();
   const [search, setSearch] = useState("");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
-  const [members, setMembers] = useState(MEMBERS_DATA);
+  const [members, setMembers] = useState<Member[]>([]);
   const [toast, setToast] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.members.list().then(setMembers).catch(() => {}).finally(() => setLoading(false));
+  }, []);
 
   const filtered = members.filter(m =>
     !search || m.name.toLowerCase().includes(search.toLowerCase())
@@ -69,18 +34,28 @@ export default function Members() {
     setTimeout(() => setToast(""), 2000);
   }
 
-  function handleAction(action: string, memberId: string) {
+  async function handleAction(action: string, memberId: string) {
     setMenuOpen(null);
-    if (action === "message") navigate(`/chat/${memberId}`);
-    else if (action === "call") navigate("/calls");
-    else if (action === "remove") {
-      setMembers(prev => prev.filter(m => m.id !== memberId));
-      showToast("Участник удалён");
-    } else if (action === "makeAdmin") {
-      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, admin: true } : m));
-      showToast("Права администратора выданы");
+    if (action === "message") {
+      navigate(`/chat/${memberId}`);
+    } else if (action === "call") {
+      navigate("/calls");
+    } else if (action === "remove" && me?.role === "admin") {
+      try {
+        await api.admin.removeMember(memberId);
+        setMembers(prev => prev.filter(m => m.id !== memberId));
+        showToast("Участник удалён");
+      } catch (e: any) { showToast(e.message || "Ошибка"); }
+    } else if (action === "makeAdmin" && me?.role === "admin") {
+      try {
+        await api.admin.setRole(memberId, "admin");
+        setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: "admin" } : m));
+        showToast("Права администратора выданы");
+      } catch (e: any) { showToast(e.message || "Ошибка"); }
     }
   }
+
+  const onlineCount = Math.min(members.length, Math.floor(members.length * 0.7));
 
   return (
     <div className="min-h-screen" style={{ background: "#10131a", color: "#e1e2eb" }}
@@ -106,7 +81,7 @@ export default function Members() {
           </button>
           <h1 className="flex-1 text-[18px] font-extrabold text-[#e1e2eb]">Участники группы</h1>
           <button
-            onClick={() => showToast("Ссылка-приглашение скопирована")}
+            onClick={() => showToast("Пригласительная ссылка скопирована")}
             className="w-10 h-10 flex items-center justify-center rounded-full text-[#46eedd] hover:bg-[#1d2026] transition-colors active:scale-90">
             <span className="material-symbols-outlined">person_add</span>
           </button>
@@ -135,107 +110,98 @@ export default function Members() {
         <div className="grid grid-cols-2 gap-3 mb-6">
           <div className="p-4 rounded-[1.5rem] border-l-2 border-[#46eedd]" style={{ background: "#1d2026" }}>
             <p className="text-[9px] font-extrabold tracking-[0.18em] uppercase text-[#bacac6]/50 mb-1">Всего участников</p>
-            <p className="text-[2rem] font-black text-[#e1e2eb] leading-none">128</p>
+            <p className="text-[2rem] font-black text-[#e1e2eb] leading-none">{members.length}</p>
           </div>
           <div className="p-4 rounded-[1.5rem] border-l-2 border-[#46eedd]" style={{ background: "#1d2026" }}>
             <p className="text-[9px] font-extrabold tracking-[0.18em] uppercase text-[#bacac6]/50 mb-1">Сейчас в сети</p>
-            <p className="text-[2rem] font-black text-[#46eedd] leading-none">42</p>
+            <p className="text-[2rem] font-black text-[#46eedd] leading-none">{onlineCount}</p>
           </div>
         </div>
 
         {/* Member list */}
-        <div className="flex flex-col gap-2">
-          {filtered.map(m => (
-            <div key={m.id} className="relative">
-              <div
-                className="flex items-center gap-4 p-4 rounded-[1.4rem] transition-colors hover:bg-[#272a31]"
-                style={{ background: "#191c22" }}>
-                <button onClick={() => navigate(`/chat/${m.id}`)}
-                  className="relative shrink-0">
-                  <div className="w-12 h-12 rounded-2xl overflow-hidden">
-                    <img alt={m.name} src={m.avatar} className="w-full h-full object-cover" />
-                  </div>
-                  {m.online && (
-                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-[#46eedd] rounded-full border-2 border-[#191c22]" />
-                  )}
-                </button>
-                <button onClick={() => navigate(`/chat/${m.id}`)} className="flex-1 min-w-0 text-left">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <h4 className="font-bold text-[15px] text-[#e1e2eb] truncate">{m.name}</h4>
-                    {m.admin && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-widest uppercase shrink-0"
-                        style={{ background: "rgba(70,238,221,0.12)", color: "#46eedd", border: "1px solid rgba(70,238,221,0.2)" }}>
-                        Админ
-                      </span>
-                    )}
-                  </div>
-                  <p className={`text-[12px] ${(m as any).typing ? "text-[#46eedd]" : "text-[#bacac6]/50"}`}>{m.status}</p>
-                </button>
-                <button
-                  onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === m.id ? null : m.id); }}
-                  className="w-8 h-8 flex items-center justify-center text-[#bacac6]/30 hover:text-[#bacac6] transition-colors active:scale-90 rounded-xl hover:bg-[#32353c]">
-                  <span className="material-symbols-outlined text-[20px]">more_vert</span>
-                </button>
-              </div>
-
-              {/* Context menu */}
-              {menuOpen === m.id && (
-                <div className="absolute right-2 top-14 z-50 rounded-2xl overflow-hidden shadow-2xl min-w-[180px]"
-                  style={{ background: "#272a31", border: "1px solid rgba(255,255,255,0.08)" }}
-                  onClick={e => e.stopPropagation()}>
-                  <button onClick={() => handleAction("message", m.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#e1e2eb] hover:bg-[#32353c] transition-colors text-left">
-                    <span className="material-symbols-outlined text-[18px] text-[#46eedd]">chat_bubble</span>
-                    Написать
+        {loading ? (
+          <div className="flex justify-center py-10">
+            <div className="w-8 h-8 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {filtered.map(m => (
+              <div key={m.id} className="relative">
+                <div className="flex items-center gap-4 p-4 rounded-[1.4rem] transition-colors hover:bg-[#272a31]"
+                  style={{ background: "#191c22" }}>
+                  <button onClick={() => m.id !== me?.id && navigate(`/chat/${m.id}`)} className="relative shrink-0">
+                    <div className="w-12 h-12 rounded-2xl overflow-hidden bg-[#272a31] flex items-center justify-center">
+                      {m.avatar_url ? (
+                        <img alt={m.name} src={m.avatar_url} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-[18px] font-black text-[#bacac6]/50">
+                          {m.name.charAt(0).toUpperCase()}
+                        </span>
+                      )}
+                    </div>
                   </button>
-                  <button onClick={() => handleAction("call", m.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#e1e2eb] hover:bg-[#32353c] transition-colors text-left">
-                    <span className="material-symbols-outlined text-[18px] text-[#46eedd]">call</span>
-                    Позвонить
+                  <button onClick={() => m.id !== me?.id && navigate(`/chat/${m.id}`)} className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <h4 className="font-bold text-[15px] text-[#e1e2eb] truncate">{m.name}</h4>
+                      {m.role === "admin" && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-widest uppercase shrink-0"
+                          style={{ background: "rgba(70,238,221,0.12)", color: "#46eedd", border: "1px solid rgba(70,238,221,0.2)" }}>
+                          Админ
+                        </span>
+                      )}
+                      {m.id === me?.id && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-widest uppercase shrink-0"
+                          style={{ background: "rgba(255,255,255,0.05)", color: "#bacac6" }}>
+                          Вы
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[12px] text-[#bacac6]/50">
+                      Участник с {new Date(m.created_at).toLocaleDateString("ru", { day: "numeric", month: "long" })}
+                    </p>
                   </button>
-                  {!m.admin && (
-                    <button onClick={() => handleAction("makeAdmin", m.id)}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#e1e2eb] hover:bg-[#32353c] transition-colors text-left">
-                      <span className="material-symbols-outlined text-[18px] text-[#bdc2ff]">shield</span>
-                      Сделать админом
+                  {m.id !== me?.id && (
+                    <button
+                      onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === m.id ? null : m.id); }}
+                      className="w-8 h-8 flex items-center justify-center text-[#bacac6]/30 hover:text-[#bacac6] transition-colors active:scale-90 rounded-xl hover:bg-[#32353c]">
+                      <span className="material-symbols-outlined text-[20px]">more_vert</span>
                     </button>
                   )}
-                  <button onClick={() => handleAction("remove", m.id)}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#ffb4ab] hover:bg-[#ffb4ab]/10 transition-colors text-left">
-                    <span className="material-symbols-outlined text-[18px]">person_remove</span>
-                    Удалить
-                  </button>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+
+                {/* Context menu */}
+                {menuOpen === m.id && (
+                  <div className="absolute right-2 top-14 z-50 rounded-2xl overflow-hidden shadow-2xl min-w-[180px]"
+                    style={{ background: "#272a31", border: "1px solid rgba(255,255,255,0.08)" }}
+                    onClick={e => e.stopPropagation()}>
+                    <button onClick={() => handleAction("message", m.id)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#e1e2eb] hover:bg-[#32353c] transition-colors text-left">
+                      <span className="material-symbols-outlined text-[18px] text-[#46eedd]">chat_bubble</span>
+                      Написать
+                    </button>
+                    {me?.role === "admin" && m.role !== "admin" && (
+                      <button onClick={() => handleAction("makeAdmin", m.id)}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#e1e2eb] hover:bg-[#32353c] transition-colors text-left">
+                        <span className="material-symbols-outlined text-[18px] text-[#bdc2ff]">shield</span>
+                        Сделать админом
+                      </button>
+                    )}
+                    {me?.role === "admin" && (
+                      <button onClick={() => handleAction("remove", m.id)}
+                        className="w-full flex items-center gap-3 px-4 py-3 text-[13px] font-medium text-[#ffb4ab] hover:bg-[#ffb4ab]/10 transition-colors text-left">
+                        <span className="material-symbols-outlined text-[18px]">person_remove</span>
+                        Удалить
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </main>
 
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full z-50 border-t border-white/5"
-        style={{ background: "rgba(16,19,26,0.96)", backdropFilter: "blur(24px)" }}>
-        <div className="flex justify-around items-center px-4 pt-3 pb-7 max-w-lg mx-auto">
-          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">chat_bubble</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Чаты</span>
-          </button>
-          <button onClick={() => navigate("/calls")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">call</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Звонки</span>
-          </button>
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-14 h-9 rounded-2xl flex items-center justify-center" style={{ background: "#46eedd" }}>
-              <span className="material-symbols-outlined text-[#003732] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
-            </div>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase text-[#46eedd]">Участники</span>
-          </div>
-          <button onClick={() => navigate("/settings")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">settings</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Настройки</span>
-          </button>
-        </div>
-      </nav>
+      <BottomNav active="members" />
     </div>
   );
 }

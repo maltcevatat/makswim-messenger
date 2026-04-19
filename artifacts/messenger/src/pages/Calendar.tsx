@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { getProfile } from "@/auth";
+import { useAuth } from "@/context/AuthContext";
 
 const DAYS_OF_WEEK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -37,7 +37,7 @@ export default function Calendar() {
   const [month, setMonth] = useState("Сентябрь 2024");
   const [joined, setJoined] = useState<Set<string>>(new Set(["3-1", "3-3"]));
   const [toast, setToast] = useState("");
-  const profile = getProfile();
+  const { user } = useAuth();
 
   const events = ALL_EVENTS[selectedDay] || [];
 
@@ -79,8 +79,8 @@ export default function Calendar() {
           <div className="flex items-center gap-3">
             <button onClick={() => navigate("/profile")}
               className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] ring-2 ring-[#46eedd]/20 shrink-0">
-              {profile?.avatar ? (
-                <img alt="me" src={profile.avatar} className="w-full h-full object-cover" />
+              {user?.avatar_url ? (
+                <img alt="me" src={user.avatar_url} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <span className="material-symbols-outlined text-[#bacac6] text-[18px]">person</span>

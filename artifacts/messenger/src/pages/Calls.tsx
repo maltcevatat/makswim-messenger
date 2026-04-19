@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { getProfile } from "@/auth";
+import { useAuth } from "@/context/AuthContext";
 
 const RECENT_CALLS = [
   { id: "alex", name: "Алекс", avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuABnmny1DA7S9r8U6aT7MxugMb-Cj6-lvPCs66jWHaydjSMUu8NkSR7jp0F5_-xb8yyVNwKOtW89Ys0xdUBgwexa8qdN_kVGZieUjpMc3KZjlDv-kk_obXwj-hpUtZ6ti9Pk43TcM-W6T-zcmTT9EjW-Vzxt2izMrx8TSNsoFl-BoruA3JDj1S5EnFpKpHYlfgiacGb2IzQK_hmSFxQOfs-a4p5RrWyodgXG240NggzFBxHjtL1YckL_hIqZJvuC0kfDakPEVbKwE7x", type: "incoming", time: "Сегодня, 14:20", missed: false },
@@ -12,7 +12,7 @@ const RECENT_CALLS = [
 export default function Calls() {
   const [, navigate] = useLocation();
   const [calling, setCalling] = useState<string | null>(null);
-  const profile = getProfile();
+  const { user } = useAuth();
 
   function startCall(id: string) {
     setCalling(id);
@@ -47,8 +47,8 @@ export default function Calls() {
           <div className="flex items-center gap-3">
             <button onClick={() => navigate("/profile")}
               className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] ring-2 ring-[#46eedd]/20 shrink-0">
-              {profile?.avatar
-                ? <img alt="me" src={profile.avatar} className="w-full h-full object-cover" />
+              {user?.avatar_url
+                ? <img alt="me" src={user.avatar_url} className="w-full h-full object-cover" />
                 : <span className="material-symbols-outlined text-[#bacac6] text-[18px] flex items-center justify-center w-full h-full">person</span>}
             </button>
             <span className="text-[1.2rem] font-extrabold tracking-tighter text-transparent bg-clip-text"

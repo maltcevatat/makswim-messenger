@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { validateCode, markCodeUsed } from "@/auth";
+import { api } from "@/api";
 
 export default function Login() {
   const [, navigate] = useLocation();
@@ -8,38 +8,24 @@ export default function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) {
+      setError("Введите код приглашения");
+      return;
+    }
     setError("");
     setLoading(true);
-    setTimeout(() => {
-      const trimmed = code.trim().toUpperCase();
-      if (!trimmed) {
-        setError("Введите код приглашения");
-        setLoading(false);
-        return;
-      }
-      if (validateCode(trimmed)) {
-        markCodeUsed(trimmed);
-        localStorage.setItem("makswim_invite_code", trimmed);
-        navigate("/setup");
-      } else {
-        setError("Неверный или уже использованный код");
-        setLoading(false);
-      }
-    }, 800);
-  }
-
-  function handleDemo() {
-    const demoCode = "SNC-ALPHA-2024";
-    localStorage.setItem("makswim_invite_code", demoCode);
-    localStorage.setItem("makswim_authed", "1");
-    localStorage.setItem("makswim_profile", JSON.stringify({
-      name: "Александр Альфа",
-      avatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuA1w2dRctOyJv-MjEIDAiefLVahpBwOqdag3i6WbRgG0FUB20F6LhO7G4_NBMAC-kEjy5MCNQ0o172VYrAfDtSvqkIkfAHoitcUisBUit1ZMB6kbnQ7FeuHOemCOBV8VspuM3PYdbFlS6wQ8FFLibc0SxdH99jvnDxj2pw3js_WwBUkmWbBzX4nYIePv1_QusKuxu2Kr37aDRUkyhg_qnZd7pWBATv10a0nOzDOY1dmniZyeaho4czwFLmEUbrc6VkZmczeZ09GVH9x",
-      inviteCode: demoCode,
-    }));
-    navigate("/");
+    try {
+      await api.auth.validateCode(trimmed);
+      sessionStorage.setItem("makswim_pending_code", trimmed);
+      navigate("/setup");
+    } catch (err: any) {
+      setError(err.message || "Неверный или уже использованный код");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -105,12 +91,6 @@ export default function Login() {
           </p>
         </div>
       </form>
-
-      <button
-        onClick={handleDemo}
-        className="mt-6 z-10 text-[12px] text-[#bacac6]/30 hover:text-[#bacac6]/60 transition-colors underline underline-offset-2">
-        Войти как демо (для просмотра)
-      </button>
     </div>
   );
 }

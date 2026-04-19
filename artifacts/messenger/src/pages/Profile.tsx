@@ -1,32 +1,44 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
-import { getProfile, logout } from "@/auth";
+import { api } from "@/api";
+import { useAuth } from "@/context/AuthContext";
+import BottomNav from "@/components/BottomNav";
 
 export default function Profile() {
   const [, navigate] = useLocation();
+  const { user, refresh, logout } = useAuth();
+
   const [notificationsOn, setNotificationsOn] = useState(true);
   const [onlineStatus, setOnlineStatus] = useState(true);
-  const [phoneVisible, setPhoneVisible] = useState(false);
-  const profile = getProfile();
-
   const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState(profile?.name || "");
-  const [editAvatar, setEditAvatar] = useState(profile?.avatar || "");
+  const [editName, setEditName] = useState("");
+  const [editAvatar, setEditAvatar] = useState("");
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  function handleLogout() {
-    logout();
+  useEffect(() => {
+    if (user) {
+      setEditName(user.name);
+      setEditAvatar(user.avatar_url);
+    }
+  }, [user]);
+
+  async function handleLogout() {
+    await logout();
     navigate("/login");
   }
 
-  function handleSaveEdit() {
+  async function handleSaveEdit() {
     if (!editName.trim()) return;
-    const updated = { ...(profile!), name: editName.trim(), avatar: editAvatar };
-    localStorage.setItem("makswim_profile", JSON.stringify(updated));
-    setEditing(false);
-    showToast("Профиль сохранён");
-    window.location.reload();
+    setSaving(true);
+    try {
+      await api.auth.updateProfile({ name: editName.trim(), avatar_url: editAvatar });
+      await refresh();
+      setEditing(false);
+      showToast("Профиль сохранён");
+    } catch { showToast("Ошибка сохранения"); }
+    finally { setSaving(false); }
   }
 
   function showToast(msg: string) {
@@ -68,12 +80,10 @@ export default function Profile() {
             </div>
             <div className="flex flex-col items-center gap-2">
               <div className="relative">
-                <div className="w-24 h-24 rounded-[1.5rem] overflow-hidden">
+                <div className="w-24 h-24 rounded-[1.5rem] overflow-hidden bg-[#272a31] flex items-center justify-center">
                   {editAvatar
                     ? <img alt="avatar" src={editAvatar} className="w-full h-full object-cover" />
-                    : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
-                        <span className="material-symbols-outlined text-[#bacac6] text-[32px]">person</span>
-                      </div>}
+                    : <span className="material-symbols-outlined text-[#bacac6] text-[32px]">person</span>}
                 </div>
                 <button onClick={() => fileRef.current?.click()}
                   className="absolute -bottom-1 -right-1 w-8 h-8 bg-[#46eedd] text-[#003732] rounded-xl flex items-center justify-center active:scale-90">
@@ -91,10 +101,12 @@ export default function Profile() {
                 style={{ caretColor: "#46eedd" }}
               />
             </div>
-            <button onClick={handleSaveEdit}
-              className="w-full py-4 rounded-2xl font-bold text-[16px] text-[#003732] transition-all active:scale-95"
+            <button onClick={handleSaveEdit} disabled={saving}
+              className="w-full py-4 rounded-2xl font-bold text-[16px] text-[#003732] transition-all active:scale-95 disabled:opacity-70 flex items-center justify-center"
               style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
-              Сохранить
+              {saving
+                ? <div className="w-5 h-5 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" />
+                : "Сохранить"}
             </button>
           </div>
         </div>
@@ -109,8 +121,8 @@ export default function Profile() {
         <div className="flex justify-between items-center px-5 py-3.5 w-full max-w-lg mx-auto">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full overflow-hidden bg-[#272a31] ring-2 ring-[#46eedd]/20">
-              {profile?.avatar ? (
-                <img alt="me" src={profile.avatar} className="w-full h-full object-cover" />
+              {user?.avatar_url ? (
+                <img alt="me" src={user.avatar_url} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <span className="material-symbols-outlined text-[#bacac6] text-[22px]">person</span>
@@ -122,9 +134,6 @@ export default function Profile() {
               MAKSWIM
             </h1>
           </div>
-          <button className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#191c22] text-[#46eedd] hover:bg-[#272a31] transition-all active:scale-95">
-            <span className="material-symbols-outlined">search</span>
-          </button>
         </div>
       </header>
 
@@ -132,16 +141,12 @@ export default function Profile() {
         {/* Profile Hero */}
         <section className="mb-10 flex flex-col items-center text-center">
           <div className="relative mb-5">
-            <div className="w-32 h-32 rounded-[2.5rem] overflow-hidden shadow-2xl"
+            <div className="w-32 h-32 rounded-[2.5rem] overflow-hidden shadow-2xl bg-[#272a31] flex items-center justify-center"
               style={{ boxShadow: "0 0 0 4px rgba(70,238,221,0.12)" }}>
-              {profile?.avatar ? (
-                <img alt="avatar" className="w-full h-full object-cover" src={profile.avatar} />
+              {user?.avatar_url ? (
+                <img alt="avatar" className="w-full h-full object-cover" src={user.avatar_url} />
               ) : (
-                <img
-                  alt="Avatar"
-                  className="w-full h-full object-cover"
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuA1w2dRctOyJv-MjEIDAiefLVahpBwOqdag3i6WbRgG0FUB20F6LhO7G4_NBMAC-kEjy5MCNQ0o172VYrAfDtSvqkIkfAHoitcUisBUit1ZMB6kbnQ7FeuHOemCOBV8VspuM3PYdbFlS6wQ8FFLibc0SxdH99jvnDxj2pw3js_WwBUkmWbBzX4nYIePv1_QusKuxu2Kr37aDRUkyhg_qnZd7pWBATv10a0nOzDOY1dmniZyeaho4czwFLmEUbrc6VkZmczeZ09GVH9x"
-                />
+                <span className="material-symbols-outlined text-[#bacac6] text-[48px]">person</span>
               )}
             </div>
             <button onClick={() => setEditing(true)}
@@ -151,15 +156,17 @@ export default function Profile() {
           </div>
           <div className="space-y-2">
             <h2 className="text-[1.8rem] font-extrabold tracking-tight text-[#e1e2eb]">
-              {profile?.name || "Александр Альфа"}
+              {user?.name || ""}
             </h2>
-            <div className="flex gap-2 justify-center">
-              <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full border border-[#46eedd]/20"
-                style={{ background: "rgba(70,238,221,0.1)", color: "#46eedd" }}>
-                Премиум
-              </span>
+            <div className="flex gap-2 justify-center flex-wrap">
+              {user?.role === "admin" && (
+                <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full border border-[#46eedd]/20"
+                  style={{ background: "rgba(70,238,221,0.1)", color: "#46eedd" }}>
+                  Администратор
+                </span>
+              )}
               <span className="px-3 py-1 bg-[#272a31] text-[#bacac6] text-[10px] font-bold uppercase tracking-widest rounded-full border border-white/5">
-                Online
+                {onlineStatus ? "Online" : "Offline"}
               </span>
             </div>
           </div>
@@ -182,29 +189,12 @@ export default function Profile() {
             </div>
             <button
               onClick={() => setNotificationsOn(v => !v)}
-              className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${notificationsOn ? "bg-[#00d1c1]" : "bg-[#32353c]"}`}
-            >
+              className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${notificationsOn ? "bg-[#00d1c1]" : "bg-[#32353c]"}`}>
               <div className={`absolute top-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${notificationsOn ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
             </button>
           </div>
 
           {/* Privacy */}
-          <button className="p-5 rounded-[1.5rem] flex items-center justify-between hover:bg-[#1d2026] transition-colors text-left w-full"
-            style={{ background: "#191c22" }}>
-            <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-2xl flex items-center justify-center"
-                style={{ background: "rgba(88,232,255,0.1)" }}>
-                <span className="material-symbols-outlined text-[#58e8ff]" style={{ fontVariationSettings: "'FILL' 1" }}>lock</span>
-              </div>
-              <div>
-                <h3 className="text-[16px] font-bold text-[#e1e2eb] leading-tight">Приватность</h3>
-                <p className="text-xs text-[#bacac6]/60">Шифрование, 2FA защита</p>
-              </div>
-            </div>
-            <span className="material-symbols-outlined text-[#bacac6]/30">chevron_right</span>
-          </button>
-
-          {/* Public profile */}
           <div className="p-5 rounded-[1.5rem] flex flex-col gap-4" style={{ background: "#191c22" }}>
             <div className="flex items-center gap-4">
               <div className="w-11 h-11 rounded-2xl flex items-center justify-center"
@@ -216,25 +206,13 @@ export default function Profile() {
                 <p className="text-xs text-[#bacac6]/60">Настройка видимости данных</p>
               </div>
             </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "rgba(11,14,20,0.5)" }}>
-                <span className="text-sm font-medium text-[#e1e2eb]">Статус в сети</span>
-                <button
-                  onClick={() => setOnlineStatus(v => !v)}
-                  className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${onlineStatus ? "bg-[#00d1c1]" : "bg-[#32353c]"}`}
-                >
-                  <div className={`absolute top-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${onlineStatus ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "rgba(11,14,20,0.5)" }}>
-                <span className="text-sm font-medium text-[#e1e2eb]">Номер телефона</span>
-                <button
-                  onClick={() => setPhoneVisible(v => !v)}
-                  className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${phoneVisible ? "bg-[#00d1c1]" : "bg-[#32353c]"}`}
-                >
-                  <div className={`absolute top-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${phoneVisible ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
-                </button>
-              </div>
+            <div className="flex items-center justify-between p-4 rounded-2xl" style={{ background: "rgba(11,14,20,0.5)" }}>
+              <span className="text-sm font-medium text-[#e1e2eb]">Статус в сети</span>
+              <button
+                onClick={() => setOnlineStatus(v => !v)}
+                className={`relative w-11 h-6 rounded-full transition-colors duration-300 ${onlineStatus ? "bg-[#00d1c1]" : "bg-[#32353c]"}`}>
+                <div className={`absolute top-[2px] w-5 h-5 bg-white rounded-full shadow transition-transform duration-300 ${onlineStatus ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
+              </button>
             </div>
           </div>
 
@@ -251,27 +229,7 @@ export default function Profile() {
         </div>
       </main>
 
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full z-50 border-t border-white/5"
-        style={{ background: "rgba(16,19,26,0.96)", backdropFilter: "blur(24px)" }}>
-        <div className="flex justify-around items-center px-6 pt-3 pb-7 max-w-lg mx-auto">
-          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
-            <span className="material-symbols-outlined text-[22px]">chat_bubble</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Чаты</span>
-          </button>
-          <button onClick={() => navigate("/admin")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
-            <span className="material-symbols-outlined text-[22px]">shield</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Админ</span>
-          </button>
-          {/* Профиль — active */}
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-14 h-9 rounded-2xl flex items-center justify-center" style={{ background: "#46eedd" }}>
-              <span className="material-symbols-outlined text-[#003732] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>person</span>
-            </div>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase text-[#46eedd]">Профиль</span>
-          </div>
-        </div>
-      </nav>
+      <BottomNav active="profile" />
     </div>
   );
 }

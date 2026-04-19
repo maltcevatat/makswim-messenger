@@ -1,19 +1,37 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { generateCode, addExtraCode, getExtraCodes } from "@/auth";
+import { api } from "@/api";
+import BottomNav from "@/components/BottomNav";
 
 export default function Admin() {
   const [, navigate] = useLocation();
-  const [codes, setCodes] = useState<{ code: string; created: string; used: boolean }[]>(() => {
-    const extra = getExtraCodes();
-    return extra.map(c => ({ code: c, created: "Только что", used: false }));
-  });
+  const [codes, setCodes] = useState<{ id: string; code: string; grants_admin: boolean; is_used: boolean; created_at: string }[]>([]);
+  const [stats, setStats] = useState({ total_users: 0, total_codes: 0, used_codes: 0, online_users: 0 });
   const [copied, setCopied] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState("");
 
-  function handleGenerate() {
-    const code = generateCode();
-    addExtraCode(code);
-    setCodes(prev => [{ code, created: new Date().toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }), used: false }, ...prev]);
+  useEffect(() => {
+    Promise.all([api.admin.codes(), api.admin.stats()])
+      .then(([c, s]) => { setCodes(c); setStats(s); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2000);
+  }
+
+  async function handleGenerate() {
+    setGenerating(true);
+    try {
+      const newCode = await api.admin.generateCode();
+      setCodes(prev => [{ ...newCode, grants_admin: false, is_used: false, created_at: new Date().toISOString() }, ...prev]);
+      showToast("Новый код создан");
+    } catch { showToast("Ошибка генерации кода"); }
+    finally { setGenerating(false); }
   }
 
   function copyCode(code: string) {
@@ -22,17 +40,25 @@ export default function Admin() {
     setTimeout(() => setCopied(null), 2000);
   }
 
-  const stats = [
-    { label: "Всего участников", value: "128", icon: "group", color: "#46eedd" },
-    { label: "Активны сегодня", value: "42", icon: "person_check", color: "#46eedd" },
-    { label: "Кодов создано", value: String(codes.length + 5), icon: "key", color: "#bdc2ff" },
-    { label: "Кодов использовано", value: "5", icon: "lock", color: "#bdc2ff" },
+  const statCards = [
+    { label: "Всего участников", value: String(stats.total_users), icon: "group", color: "#46eedd" },
+    { label: "Активны сейчас", value: String(stats.online_users), icon: "person_check", color: "#46eedd" },
+    { label: "Кодов создано", value: String(stats.total_codes), icon: "key", color: "#bdc2ff" },
+    { label: "Кодов использовано", value: String(stats.used_codes), icon: "lock", color: "#bdc2ff" },
   ];
 
   return (
     <div className="min-h-screen" style={{ background: "#10131a", color: "#e1e2eb" }}>
       <div className="fixed top-0 right-0 w-[60%] h-[40%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(100px)" }} />
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl"
+          style={{ background: "#46eedd" }}>
+          {toast}
+        </div>
+      )}
 
       {/* Header */}
       <header className="fixed top-0 w-full z-50 border-b border-white/5"
@@ -56,7 +82,7 @@ export default function Admin() {
       <main className="pt-20 pb-32 px-5 max-w-lg mx-auto">
         {/* Stats grid */}
         <div className="grid grid-cols-2 gap-3 mt-4 mb-6">
-          {stats.map(s => (
+          {statCards.map(s => (
             <div key={s.label} className="p-4 rounded-[1.5rem] flex flex-col gap-2" style={{ background: "#1d2026" }}>
               <div className="w-10 h-10 rounded-xl flex items-center justify-center"
                 style={{ background: `${s.color}15` }}>
@@ -77,41 +103,51 @@ export default function Admin() {
             </div>
             <button
               onClick={handleGenerate}
-              className="px-4 py-2.5 rounded-xl font-bold text-[13px] text-[#003732] flex items-center gap-1.5 active:scale-95 transition-all"
+              disabled={generating}
+              className="px-4 py-2.5 rounded-xl font-bold text-[13px] text-[#003732] flex items-center gap-1.5 active:scale-95 transition-all disabled:opacity-70"
               style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)", boxShadow: "0 4px 16px rgba(70,238,221,0.25)" }}>
-              <span className="material-symbols-outlined text-[18px]">add</span>
-              Создать
+              {generating
+                ? <div className="w-4 h-4 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" />
+                : <><span className="material-symbols-outlined text-[18px]">add</span>Создать</>}
             </button>
           </div>
 
-          {codes.length === 0 ? (
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
+            </div>
+          ) : codes.length === 0 ? (
             <div className="py-8 flex flex-col items-center gap-3 text-center">
               <span className="material-symbols-outlined text-[40px] text-[#bacac6]/20">key_off</span>
               <p className="text-[#bacac6]/40 text-[13px]">Нажмите «Создать» чтобы выдать первый код</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {codes.map((c, i) => (
-                <div key={i} className="flex items-center gap-3 p-3.5 rounded-xl"
+            <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
+              {codes.map((c) => (
+                <div key={c.id} className={`flex items-center gap-3 p-3.5 rounded-xl ${c.is_used ? "opacity-40" : ""}`}
                   style={{ background: "#10131a" }}>
                   <span className="material-symbols-outlined text-[#46eedd] text-[18px]">key</span>
                   <div className="flex-1 min-w-0">
                     <p className="font-mono text-[14px] font-bold text-[#e1e2eb] tracking-widest">{c.code}</p>
-                    <p className="text-[11px] text-[#bacac6]/40">{c.created}</p>
+                    <p className="text-[11px] text-[#bacac6]/40">
+                      {c.is_used ? "Использован" : c.grants_admin ? "Администратор" : "Пользователь"}
+                    </p>
                   </div>
-                  <button
-                    onClick={() => copyCode(c.code)}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${copied === c.code ? "text-[#003732]" : "text-[#46eedd]"}`}
-                    style={{ background: copied === c.code ? "#46eedd" : "rgba(70,238,221,0.1)" }}>
-                    {copied === c.code ? "Скопировано" : "Копировать"}
-                  </button>
+                  {!c.is_used && (
+                    <button
+                      onClick={() => copyCode(c.code)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${copied === c.code ? "text-[#003732]" : "text-[#46eedd]"}`}
+                      style={{ background: copied === c.code ? "#46eedd" : "rgba(70,238,221,0.1)" }}>
+                      {copied === c.code ? "Скопировано" : "Копировать"}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* Members quick view */}
+        {/* Members link */}
         <button
           onClick={() => navigate("/members")}
           className="w-full p-5 rounded-[1.5rem] flex items-center gap-4 text-left hover:bg-[#272a31] transition-colors active:scale-[0.98]"
@@ -122,58 +158,13 @@ export default function Admin() {
           </div>
           <div className="flex-1">
             <h3 className="font-bold text-[15px] text-[#e1e2eb]">Список участников</h3>
-            <p className="text-[12px] text-[#bacac6]/50">128 пользователей</p>
+            <p className="text-[12px] text-[#bacac6]/50">{stats.total_users} пользователей</p>
           </div>
           <span className="material-symbols-outlined text-[#bacac6]/30">chevron_right</span>
         </button>
-
-        {/* Activity */}
-        <div className="mt-4 rounded-[1.5rem] p-5" style={{ background: "#1d2026" }}>
-          <h2 className="text-[16px] font-bold text-[#e1e2eb] mb-4">Активность сети</h2>
-          <div className="space-y-3">
-            {[
-              { action: "Новый участник", detail: "Иван Карелин присоединился", time: "14:55", icon: "person_add", color: "#46eedd" },
-              { action: "Код использован", detail: "SNC-TEAM-0001 активирован", time: "14:32", icon: "key", color: "#bdc2ff" },
-              { action: "Сообщение удалено", detail: "В Общем чате", time: "13:10", icon: "delete", color: "#ffb4ab" },
-              { action: "Новый код", detail: "SNC-MAKS-7777 создан", time: "12:00", icon: "add_circle", color: "#46eedd" },
-            ].map((a, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
-                  style={{ background: `${a.color}15` }}>
-                  <span className="material-symbols-outlined text-[16px]" style={{ color: a.color }}>{a.icon}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[13px] font-bold text-[#e1e2eb]">{a.action}</p>
-                  <p className="text-[11px] text-[#bacac6]/50 truncate">{a.detail}</p>
-                </div>
-                <span className="text-[10px] text-[#bacac6]/30 font-medium shrink-0 mt-0.5">{a.time}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </main>
 
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 left-0 w-full z-50 border-t border-white/5"
-        style={{ background: "rgba(16,19,26,0.96)", backdropFilter: "blur(24px)" }}>
-        <div className="flex justify-around items-center px-6 pt-3 pb-7 max-w-lg mx-auto">
-          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
-            <span className="material-symbols-outlined text-[22px]">chat_bubble</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Чаты</span>
-          </button>
-          {/* Админ — active */}
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-14 h-9 rounded-2xl flex items-center justify-center" style={{ background: "#46eedd" }}>
-              <span className="material-symbols-outlined text-[#003732] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>shield</span>
-            </div>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase text-[#46eedd]">Админ</span>
-          </div>
-          <button onClick={() => navigate("/profile")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors">
-            <span className="material-symbols-outlined text-[22px]">person</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Профиль</span>
-          </button>
-        </div>
-      </nav>
+      <BottomNav active="admin" />
     </div>
   );
 }

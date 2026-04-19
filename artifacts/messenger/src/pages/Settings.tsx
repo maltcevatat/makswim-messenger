@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { getProfile, logout } from "@/auth";
+import { useAuth } from "@/context/AuthContext";
 
 export default function Settings() {
   const [, navigate] = useLocation();
@@ -9,7 +9,7 @@ export default function Settings() {
   const [previewOn, setPreviewOn] = useState(true);
   const [darkMode] = useState(true);
   const [toast, setToast] = useState("");
-  const profile = getProfile();
+  const { user, logout } = useAuth();
 
   function showToast(msg: string) {
     setToast(msg);
@@ -43,14 +43,14 @@ export default function Settings() {
           className="w-full flex items-center gap-4 p-5 rounded-[1.5rem] mt-4 mb-6 text-left hover:bg-[#272a31] transition-all active:scale-[0.98]"
           style={{ background: "#1d2026" }}>
           <div className="w-14 h-14 rounded-2xl overflow-hidden shrink-0 ring-2 ring-[#46eedd]/20">
-            {profile?.avatar
-              ? <img alt="me" src={profile.avatar} className="w-full h-full object-cover" />
+            {user?.avatar_url
+              ? <img alt="me" src={user.avatar_url} className="w-full h-full object-cover" />
               : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
                   <span className="material-symbols-outlined text-[#bacac6] text-[28px]">person</span>
                 </div>}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-[17px] font-bold text-[#e1e2eb]">{profile?.name || "Мой профиль"}</h2>
+            <h2 className="text-[17px] font-bold text-[#e1e2eb]">{user?.name || "Мой профиль"}</h2>
             <p className="text-[12px] text-[#46eedd]">Редактировать профиль</p>
           </div>
           <span className="material-symbols-outlined text-[#bacac6]/30">chevron_right</span>
@@ -140,7 +140,7 @@ export default function Settings() {
 
           {/* Logout */}
           <button
-            onClick={() => { logout(); navigate("/login"); }}
+            onClick={async () => { await logout(); navigate("/login"); }}
             className="w-full py-4 rounded-[1.5rem] border font-bold flex items-center justify-center gap-2 hover:bg-[#ffb4ab]/10 transition-all active:scale-[0.98]"
             style={{ background: "rgba(147,0,10,0.08)", borderColor: "rgba(255,180,171,0.15)", color: "#ffb4ab" }}>
             <span className="material-symbols-outlined text-[20px]">logout</span>

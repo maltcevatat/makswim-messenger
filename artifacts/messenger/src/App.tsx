@@ -1,42 +1,52 @@
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { isAuthed, getProfile } from "@/auth";
-import Login from "@/pages/Login";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Login        from "@/pages/Login";
 import ProfileSetup from "@/pages/ProfileSetup";
-import ChatsList from "@/pages/ChatsList";
-import ChatView from "@/pages/ChatView";
-import Profile from "@/pages/Profile";
-import Calendar from "@/pages/Calendar";
-import Members from "@/pages/Members";
-import Admin from "@/pages/Admin";
-import Calls from "@/pages/Calls";
-import Settings from "@/pages/Settings";
+import ChatsList    from "@/pages/ChatsList";
+import ChatView     from "@/pages/ChatView";
+import Profile      from "@/pages/Profile";
+import Calendar     from "@/pages/Calendar";
+import Members      from "@/pages/Members";
+import Admin        from "@/pages/Admin";
+import Calls        from "@/pages/Calls";
+import Settings     from "@/pages/Settings";
 
 const queryClient = new QueryClient();
 
-function AuthGuard({ children }: { children: React.ReactNode }) {
+function AuthGuard({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+  const { user, loading } = useAuth();
   const [, navigate] = useLocation();
+
   useEffect(() => {
-    if (!isAuthed()) {
-      navigate("/login");
-    } else if (!getProfile()?.name) {
-      navigate("/setup");
-    }
-  }, [navigate]);
+    if (loading) return;
+    if (!user) { navigate("/login"); return; }
+    if (adminOnly && user.role !== "admin") { navigate("/"); }
+  }, [user, loading, adminOnly, navigate]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#10131a" }}>
+        <div className="w-8 h-8 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (!user) return null;
+  if (adminOnly && user.role !== "admin") return null;
   return <>{children}</>;
 }
 
 function Router() {
   return (
     <Switch>
-      <Route path="/login" component={Login} />
-      <Route path="/setup" component={ProfileSetup} />
+      <Route path="/login"  component={Login} />
+      <Route path="/setup"  component={ProfileSetup} />
       <Route path="/">
         <AuthGuard><ChatsList /></AuthGuard>
       </Route>
       <Route path="/chat/:id">
-        {(params) => <AuthGuard><ChatView id={params.id} /></AuthGuard>}
+        {(p) => <AuthGuard><ChatView id={p.id} /></AuthGuard>}
       </Route>
       <Route path="/profile">
         <AuthGuard><Profile /></AuthGuard>
@@ -48,7 +58,7 @@ function Router() {
         <AuthGuard><Members /></AuthGuard>
       </Route>
       <Route path="/admin">
-        <AuthGuard><Admin /></AuthGuard>
+        <AuthGuard adminOnly><Admin /></AuthGuard>
       </Route>
       <Route path="/calls">
         <AuthGuard><Calls /></AuthGuard>
@@ -63,14 +73,14 @@ function Router() {
   );
 }
 
-function App() {
+export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-        <Router />
-      </WouterRouter>
+      <AuthProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+          <Router />
+        </WouterRouter>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
-
-export default App;

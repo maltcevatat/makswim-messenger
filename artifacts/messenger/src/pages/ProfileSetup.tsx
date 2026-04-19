@@ -1,9 +1,11 @@
 import { useState, useRef } from "react";
 import { useLocation } from "wouter";
-import { saveProfile } from "@/auth";
+import { api } from "@/api";
+import { useAuth } from "@/context/AuthContext";
 
 export default function ProfileSetup() {
   const [, navigate] = useLocation();
+  const { refresh } = useAuth();
   const [name, setName] = useState("");
   const [avatar, setAvatar] = useState("");
   const [loading, setLoading] = useState(false);
@@ -14,39 +16,35 @@ export default function ProfileSetup() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      setAvatar(ev.target?.result as string);
-    };
+    reader.onload = (ev) => setAvatar(ev.target?.result as string);
     reader.readAsDataURL(file);
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) {
-      setError("Введите ваше имя");
-      return;
-    }
+    if (!name.trim()) { setError("Введите ваше имя"); return; }
+    const code = sessionStorage.getItem("makswim_pending_code");
+    if (!code) { setError("Код приглашения не найден. Вернитесь и введите код снова."); return; }
     setLoading(true);
-    setTimeout(() => {
-      const inviteCode = localStorage.getItem("makswim_invite_code") || "";
-      saveProfile({
-        name: name.trim(),
-        avatar: avatar || "",
-        inviteCode,
-      });
+    try {
+      await api.auth.setupProfile({ code, name: name.trim(), avatar_url: avatar });
+      sessionStorage.removeItem("makswim_pending_code");
+      await refresh();
       navigate("/");
-    }, 600);
+    } catch (err: any) {
+      setError(err.message || "Ошибка при создании профиля");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <div className="min-h-screen flex flex-col items-center px-6 py-10"
       style={{ background: "linear-gradient(160deg, #0d1018 0%, #10131a 60%, #0a1520 100%)" }}>
 
-      {/* Background glow */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[80%] h-[50%] pointer-events-none -z-0"
         style={{ background: "radial-gradient(ellipse at bottom, rgba(70,238,221,0.06) 0%, transparent 70%)" }} />
 
-      {/* Step badge */}
       <div className="mt-8 mb-10 z-10">
         <span className="px-4 py-1.5 rounded-full text-[11px] font-bold tracking-[0.15em] uppercase border border-[#46eedd]/20 text-[#bacac6]"
           style={{ background: "rgba(70,238,221,0.06)" }}>
@@ -54,21 +52,18 @@ export default function ProfileSetup() {
         </span>
       </div>
 
-      {/* Title */}
       <div className="text-center mb-8 z-10">
         <h1 className="text-[2rem] font-black tracking-tight leading-tight mb-2">
           Создайте свой{" "}
           <span style={{ color: "#46eedd" }}>профиль</span>
         </h1>
-        <p className="text-[#bacac6] text-[15px]">безопасном пространстве MAKSWIM</p>
+        <p className="text-[#bacac6] text-[15px]">в безопасном пространстве MAKSWIM</p>
       </div>
 
-      {/* Form card */}
       <form onSubmit={handleSubmit} className="w-full max-w-sm z-10 flex flex-col gap-6">
         <div className="rounded-[2rem] p-6 flex flex-col gap-6"
           style={{ background: "#1d2026", boxShadow: "0 4px 40px rgba(0,0,0,0.4)" }}>
 
-          {/* Photo upload */}
           <div className="flex flex-col items-center">
             <div className="relative">
               <button
@@ -96,7 +91,6 @@ export default function ProfileSetup() {
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
           </div>
 
-          {/* Name input */}
           <div className="flex flex-col gap-2">
             <label className="text-[11px] font-extrabold tracking-[0.15em] uppercase text-[#e1e2eb]">
               Ваше имя
@@ -120,7 +114,6 @@ export default function ProfileSetup() {
           </div>
         </div>
 
-        {/* Submit */}
         <button
           type="submit"
           disabled={loading}
@@ -132,7 +125,6 @@ export default function ProfileSetup() {
         </button>
       </form>
 
-      {/* Privacy */}
       <p className="text-center text-[12px] text-[#bacac6]/30 mt-8 z-10">
         Создавая профиль, вы соглашаетесь с нашей{" "}
         <a href="#" className="text-[#46eedd]/60 underline">Политикой конфиденциальности</a>
