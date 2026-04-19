@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation } from "wouter";
 import { api } from "@/api";
 import { useAuth } from "@/context/AuthContext";
@@ -26,7 +26,7 @@ function Avatar({ name, url, size = 14 }: { name: string; url: string | null; si
 
 interface ChatsData {
   custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
-  personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
+  personal: { id: string; name: string; avatar_url: string | null; has_avatar: boolean; last_msg: string | null; last_time: string | null }[];
 }
 
 type Member = { id: string; name: string; avatar_url: string; role: string };
@@ -61,23 +61,38 @@ export default function ChatsList() {
   const [addingMembers, setAddingMembers] = useState(false);
   const [manageTab, setManageTab] = useState<"members" | "add">("members");
   const [toast, setToast] = useState("");
+  const [avatarCache, setAvatarCache] = useState<Record<string, string>>({});
+  const avatarLoadingRef = useRef<Set<string>>(new Set());
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2200);
   }, []);
 
-  const loadChats = () =>
+  const loadAvatars = useCallback((users: { id: string; has_avatar: boolean }[]) => {
+    const toLoad = users.filter(u => u.has_avatar && !avatarLoadingRef.current.has(u.id));
+    if (toLoad.length === 0) return;
+    toLoad.forEach(u => avatarLoadingRef.current.add(u.id));
+    toLoad.forEach(async (u) => {
+      try {
+        const { avatar_url } = await api.auth.userAvatar(u.id);
+        if (avatar_url) setAvatarCache(prev => ({ ...prev, [u.id]: avatar_url }));
+      } catch {}
+    });
+  }, []);
+
+  const loadChats = useCallback(() =>
     api.chats.list()
-      .then(d => setChatsData(d))
+      .then(d => { setChatsData(d); loadAvatars(d.personal); })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => setLoading(false))
+  , [loadAvatars]);
 
   useEffect(() => {
     loadChats();
-    const iv = setInterval(loadChats, 4000);
+    const iv = setInterval(loadChats, 20000);
     return () => clearInterval(iv);
-  }, []);
+  }, [loadChats]);
 
   useEffect(() => {
     if (showCreateGroup && allMembers.length === 0) {
@@ -524,8 +539,8 @@ export default function ChatsList() {
                 className="flex items-center gap-4 p-3 -mx-2 w-full text-left rounded-3xl hover:bg-[#1d2026] transition-all cursor-pointer active:bg-[#272a31]/50">
                 <div className="relative shrink-0">
                   <div className="w-14 h-14 rounded-2xl overflow-hidden shadow-md bg-[#272a31] flex items-center justify-center">
-                    {chat.avatar_url ? (
-                      <img alt={chat.name} className="w-full h-full object-cover" src={chat.avatar_url} />
+                    {avatarCache[chat.id] ? (
+                      <img alt={chat.name} className="w-full h-full object-cover" src={avatarCache[chat.id]} />
                     ) : (
                       <span className="text-[22px] font-black text-[#bacac6]/50">
                         {chat.name.charAt(0).toUpperCase()}

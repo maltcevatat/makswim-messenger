@@ -36,6 +36,8 @@ export interface Me {
 export const api = {
   auth: {
     me: () => apiFetch<Me>("/auth/me"),
+    userAvatar: (userId: string) =>
+      apiFetch<{ avatar_url: string | null }>(`/users/${userId}/avatar`),
     validateCode: (code: string) =>
       apiFetch<{ valid: boolean; grants_admin: boolean; is_new: boolean }>("/auth/validate-code", {
         method: "POST",

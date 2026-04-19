@@ -117,7 +117,8 @@ router.get("/chats", async (req: AuthRequest, res) => {
     return {
       id:         u.id,
       name:       u.name,
-      avatar_url: u.avatar_url,
+      avatar_url: null,          // loaded lazily via /api/users/:id/avatar
+      has_avatar: !!u.avatar_url,
       last_msg:   lm ? msgPreview(lm.content, lm.content_type) : null,
       last_time:  lm?.created_at ?? null,
     };

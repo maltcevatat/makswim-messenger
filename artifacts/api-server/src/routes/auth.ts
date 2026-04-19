@@ -165,6 +165,19 @@ router.get("/auth/me", requireAuth, (req: AuthRequest, res) => {
   res.json(req.user);
 });
 
+// GET /api/users/:id/avatar — lightweight avatar fetch (no full profile)
+router.get("/users/:id/avatar", requireAuth, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const [user] = await db
+    .select({ avatar_url: usersTable.avatar_url })
+    .from(usersTable)
+    .where(eq(usersTable.id, id))
+    .limit(1);
+
+  if (!user) { res.status(404).json({ error: "User not found" }); return; }
+  res.json({ avatar_url: user.avatar_url || null });
+});
+
 // PUT /api/auth/profile
 router.put("/auth/profile", requireAuth, async (req: AuthRequest, res) => {
   const { name, avatar_url } = req.body;
