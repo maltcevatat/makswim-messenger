@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   db, messagesTable, usersTable, chatsTable, chatMembersTable, pushSubscriptionsTable
 } from "@workspace/db";
-import { eq, desc, asc, and, inArray, sql } from "drizzle-orm";
+import { eq, desc, asc, and, inArray } from "drizzle-orm";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import crypto from "crypto";
 import webpush from "web-push";
@@ -64,92 +64,78 @@ function msgPreview(content: string | null, contentType: string | null): string 
 router.get("/chats", async (req: AuthRequest, res) => {
   const userId = req.user!.id;
 
-  // Fetch all users in one query
-  const allUsers = await db
-    .select({ id: usersTable.id, name: usersTable.name, avatar_url: usersTable.avatar_url })
-    .from(usersTable)
-    .orderBy(usersTable.name);
+  // Fetch all users and groups in parallel
+  const [allUsers, userGroups] = await Promise.all([
+    db.select({ id: usersTable.id, name: usersTable.name, avatar_url: usersTable.avatar_url })
+      .from(usersTable)
+      .orderBy(usersTable.name),
+    db.select({ id: chatsTable.id, name: chatsTable.name })
+      .from(chatsTable)
+      .innerJoin(chatMembersTable, eq(chatMembersTable.chat_id, chatsTable.id))
+      .where(and(eq(chatMembersTable.user_id, userId), eq(chatsTable.type, "group"))),
+  ]);
 
   const otherUsers = allUsers.filter(u => u.id !== userId);
-
-  // Compute all personal chat IDs
   const personalChatIds = otherUsers.map(u => personalChatId(userId, u.id));
-
-  // Get custom group chats for the user
-  const userGroups = await db
-    .select({ id: chatsTable.id, name: chatsTable.name })
-    .from(chatsTable)
-    .innerJoin(chatMembersTable, eq(chatMembersTable.chat_id, chatsTable.id))
-    .where(and(eq(chatMembersTable.user_id, userId), eq(chatsTable.type, "group")));
-
   const groupChatIds = userGroups.map(g => g.id);
-
-  // Batch fetch last messages for ALL chats at once using a CTE / subquery
   const allChatIds = [...personalChatIds, ...groupChatIds];
 
+  // Batch-fetch the most recent message per chat using inArray (safe drizzle query)
   let lastMsgMap: Record<string, { content: string; content_type: string; created_at: string }> = {};
-
   if (allChatIds.length > 0) {
-    // Get the most recent message per chat_id in one query
-    const rows = await db.execute(sql`
-      SELECT DISTINCT ON (chat_id)
-        chat_id,
-        content,
-        content_type,
-        created_at
-      FROM ${messagesTable}
-      WHERE chat_id = ANY(${allChatIds})
-      ORDER BY chat_id, created_at DESC
-    `);
+    const allMsgs = await db
+      .select({
+        chat_id:      messagesTable.chat_id,
+        content:      messagesTable.content,
+        content_type: messagesTable.content_type,
+        created_at:   messagesTable.created_at,
+      })
+      .from(messagesTable)
+      .where(inArray(messagesTable.chat_id, allChatIds))
+      .orderBy(desc(messagesTable.created_at));
 
-    for (const row of rows.rows as any[]) {
-      lastMsgMap[row.chat_id] = {
-        content: row.content,
-        content_type: row.content_type,
-        created_at: row.created_at,
-      };
+    // Keep only the first (most recent) message per chat
+    for (const row of allMsgs) {
+      if (!lastMsgMap[row.chat_id]) {
+        lastMsgMap[row.chat_id] = {
+          content: row.content,
+          content_type: row.content_type,
+          created_at: row.created_at,
+        };
+      }
     }
   }
 
-  // Build personal chats list, sorted by last message time
-  const personalChats = otherUsers
-    .map(u => {
-      const chatId = personalChatId(userId, u.id);
-      const lm = lastMsgMap[chatId] || null;
-      return {
-        id:         u.id,
-        name:       u.name,
-        avatar_url: u.avatar_url,
-        last_msg:   lm ? msgPreview(lm.content, lm.content_type) : null,
-        last_time:  lm?.created_at || null,
-      };
-    })
-    .sort((a, b) => {
-      if (!a.last_time && !b.last_time) return 0;
-      if (!a.last_time) return 1;
-      if (!b.last_time) return -1;
-      return new Date(b.last_time).getTime() - new Date(a.last_time).getTime();
-    });
-
-  const customGroupsWithMsgs = userGroups.map(g => {
-    const lm = lastMsgMap[g.id] || null;
-    return {
-      id: g.id,
-      name: g.name || "Группа",
-      last_msg: lm ? msgPreview(lm.content, lm.content_type) : null,
-      last_time: lm?.created_at || null,
-    };
-  }).sort((a, b) => {
+  const sortByTime = (a: { last_time: string | null }, b: { last_time: string | null }) => {
     if (!a.last_time && !b.last_time) return 0;
     if (!a.last_time) return 1;
     if (!b.last_time) return -1;
     return new Date(b.last_time).getTime() - new Date(a.last_time).getTime();
-  });
+  };
 
-  res.json({
-    custom_groups: customGroupsWithMsgs,
-    personal: personalChats,
-  });
+  const personalChats = otherUsers.map(u => {
+    const cid = personalChatId(userId, u.id);
+    const lm = lastMsgMap[cid] ?? null;
+    return {
+      id:         u.id,
+      name:       u.name,
+      avatar_url: u.avatar_url,
+      last_msg:   lm ? msgPreview(lm.content, lm.content_type) : null,
+      last_time:  lm?.created_at ?? null,
+    };
+  }).sort(sortByTime);
+
+  const customGroupsWithMsgs = userGroups.map(g => {
+    const lm = lastMsgMap[g.id] ?? null;
+    return {
+      id:        g.id,
+      name:      g.name || "Группа",
+      last_msg:  lm ? msgPreview(lm.content, lm.content_type) : null,
+      last_time: lm?.created_at ?? null,
+    };
+  }).sort(sortByTime);
+
+  res.json({ custom_groups: customGroupsWithMsgs, personal: personalChats });
 });
 
 // POST /api/group-chats (admin only)
