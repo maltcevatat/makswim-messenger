@@ -19,8 +19,20 @@ async function createSession(userId: string) {
   return { token, expiresAt };
 }
 
+function validateInviteCode(invite: {
+  is_revoked: boolean;
+  expires_at: Date | null;
+}): { valid: boolean; error?: string } {
+  if (invite.is_revoked) {
+    return { valid: false, error: "Этот код был отозван" };
+  }
+  if (invite.expires_at && invite.expires_at < new Date()) {
+    return { valid: false, error: "Срок действия кода истёк" };
+  }
+  return { valid: true };
+}
+
 // POST /api/auth/validate-code
-// Checks the code — returns is_new:true for fresh codes, is_new:false for returning users
 router.post("/auth/validate-code", async (req, res) => {
   const { code } = req.body;
   if (!code || typeof code !== "string") {
@@ -41,18 +53,20 @@ router.post("/auth/validate-code", async (req, res) => {
 
   const invite = rows[0];
 
+  const check = validateInviteCode(invite);
+  if (!check.valid) {
+    res.status(400).json({ error: check.error });
+    return;
+  }
+
   if (!invite.is_used) {
-    // Fresh code — new user registration
     res.json({ valid: true, grants_admin: invite.grants_admin, is_new: true });
   } else {
-    // Code already used — this is a returning user login
     res.json({ valid: true, grants_admin: invite.grants_admin, is_new: false });
   }
 });
 
 // POST /api/auth/setup-profile
-// NEW USER: Consumes the code, creates user + session
-// RETURNING USER: code already used → log in as existing user
 router.post("/auth/setup-profile", async (req, res) => {
   const { code, name, avatar_url } = req.body;
   if (!code) {
@@ -73,7 +87,19 @@ router.post("/auth/setup-profile", async (req, res) => {
   }
   const inviteCode = codeRows[0];
 
-  // RETURNING USER: code is used — log in as the owner of this code
+  // Check if revoked (block even returning users)
+  if (inviteCode.is_revoked) {
+    res.status(403).json({ error: "Доступ отозван. Обратитесь к администратору." });
+    return;
+  }
+
+  // Check expiry only for unused codes (returning users can still log in)
+  if (!inviteCode.is_used && inviteCode.expires_at && inviteCode.expires_at < new Date()) {
+    res.status(400).json({ error: "Срок действия кода истёк" });
+    return;
+  }
+
+  // RETURNING USER
   if (inviteCode.is_used && inviteCode.used_by) {
     const userRows = await db
       .select()
@@ -100,7 +126,7 @@ router.post("/auth/setup-profile", async (req, res) => {
     return;
   }
 
-  // NEW USER: code is fresh — need name
+  // NEW USER
   if (!name) {
     res.status(400).json({ error: "name is required for new registration" });
     return;

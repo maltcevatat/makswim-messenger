@@ -36,7 +36,7 @@ export default function ChatsList() {
 
   const loadChats = () =>
     api.chats.list()
-      .then(d => setChatsData({ custom_groups: [], ...d }))
+      .then(d => setChatsData(d))
       .catch(() => {})
       .finally(() => setLoading(false));
 

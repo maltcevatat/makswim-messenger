@@ -1,5 +1,14 @@
 const BASE = "/api";
 
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = "ApiError";
+  }
+}
+
 async function apiFetch<T = unknown>(
   path: string,
   options?: RequestInit
@@ -11,9 +20,7 @@ async function apiFetch<T = unknown>(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const err = new Error(body.error || `HTTP ${res.status}`);
-    (err as any).status = res.status;
-    throw err;
+    throw new ApiError(body.error || `HTTP ${res.status}`, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -47,16 +54,25 @@ export const api = {
         custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
         personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
       }>("/chats"),
-    messages: (chatId: string) =>
+    messages: (chatId: string, params?: { limit?: number; before?: string }) => {
+      const qs = new URLSearchParams();
+      if (params?.limit) qs.set("limit", String(params.limit));
+      if (params?.before) qs.set("before", params.before);
+      const query = qs.toString() ? `?${qs}` : "";
+      return apiFetch<{
+        id: string; content: string; content_type: string; is_deleted: boolean;
+        created_at: string; sender_id: string; sender_name: string;
+        sender_avatar: string; outgoing: boolean; client_message_id?: string;
+      }[]>(`/chats/${chatId}/messages${query}`);
+    },
+    sendMessage: (chatId: string, content: string, content_type = "text", client_message_id?: string) =>
       apiFetch<{
         id: string; content: string; content_type: string; is_deleted: boolean;
         created_at: string; sender_id: string; sender_name: string;
-        sender_avatar: string; outgoing: boolean;
-      }[]>(`/chats/${chatId}/messages`),
-    sendMessage: (chatId: string, content: string, content_type = "text") =>
-      apiFetch(`/chats/${chatId}/messages`, {
+        sender_avatar: string; outgoing: boolean; client_message_id?: string;
+      }>(`/chats/${chatId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ content, content_type }),
+        body: JSON.stringify({ content, content_type, client_message_id }),
       }),
     deleteMessage: (msgId: string) =>
       apiFetch(`/messages/${msgId}`, { method: "DELETE" }),
@@ -78,11 +94,17 @@ export const api = {
 
   admin: {
     codes: () =>
-      apiFetch<{ id: string; code: string; grants_admin: boolean; is_used: boolean; created_at: string }[]>(
-        "/admin/codes"
+      apiFetch<{
+        id: string; code: string; grants_admin: boolean; is_used: boolean;
+        is_revoked: boolean; expires_at: string | null; created_at: string;
+      }[]>("/admin/codes"),
+    generateCode: (opts?: { grants_admin?: boolean; expires_days?: number }) =>
+      apiFetch<{ id: string; code: string; grants_admin: boolean; is_used: boolean; is_revoked: boolean; expires_at: string | null; created_at: string }>(
+        "/admin/codes",
+        { method: "POST", body: JSON.stringify(opts || {}) }
       ),
-    generateCode: () =>
-      apiFetch<{ id: string; code: string }>("/admin/codes", { method: "POST" }),
+    revokeCode: (id: string) =>
+      apiFetch(`/admin/codes/${id}`, { method: "DELETE" }),
     stats: () =>
       apiFetch<{ total_users: number; total_codes: number; used_codes: number; online_users: number }>(
         "/admin/stats"

@@ -2,8 +2,9 @@ import { Router } from "express";
 import {
   db, messagesTable, usersTable, chatsTable, chatMembersTable, pushSubscriptionsTable
 } from "@workspace/db";
-import { eq, desc, asc, and, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, inArray, lt } from "drizzle-orm";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
+import { chatEmitter } from "../lib/events.js";
 import crypto from "crypto";
 import webpush from "web-push";
 
@@ -64,7 +65,6 @@ function msgPreview(content: string | null, contentType: string | null): string 
 router.get("/chats", async (req: AuthRequest, res) => {
   const userId = req.user!.id;
 
-  // Fetch all users and groups in parallel
   const [allUsers, userGroups] = await Promise.all([
     db.select({ id: usersTable.id, name: usersTable.name, avatar_url: usersTable.avatar_url })
       .from(usersTable)
@@ -80,8 +80,7 @@ router.get("/chats", async (req: AuthRequest, res) => {
   const groupChatIds = userGroups.map(g => g.id);
   const allChatIds = [...personalChatIds, ...groupChatIds];
 
-  // Batch-fetch the most recent message per chat using inArray (safe drizzle query)
-  let lastMsgMap: Record<string, { content: string; content_type: string; created_at: string }> = {};
+  let lastMsgMap: Record<string, { content: string; content_type: string; created_at: Date }> = {};
   if (allChatIds.length > 0) {
     const allMsgs = await db
       .select({
@@ -94,7 +93,6 @@ router.get("/chats", async (req: AuthRequest, res) => {
       .where(inArray(messagesTable.chat_id, allChatIds))
       .orderBy(desc(messagesTable.created_at));
 
-    // Keep only the first (most recent) message per chat
     for (const row of allMsgs) {
       if (!lastMsgMap[row.chat_id]) {
         lastMsgMap[row.chat_id] = {
@@ -106,11 +104,11 @@ router.get("/chats", async (req: AuthRequest, res) => {
     }
   }
 
-  const sortByTime = (a: { last_time: string | null }, b: { last_time: string | null }) => {
+  const sortByTime = (a: { last_time: Date | null }, b: { last_time: Date | null }) => {
     if (!a.last_time && !b.last_time) return 0;
     if (!a.last_time) return 1;
     if (!b.last_time) return -1;
-    return new Date(b.last_time).getTime() - new Date(a.last_time).getTime();
+    return b.last_time.getTime() - a.last_time.getTime();
   };
 
   const personalChats = otherUsers.map(u => {
@@ -136,6 +134,39 @@ router.get("/chats", async (req: AuthRequest, res) => {
   }).sort(sortByTime);
 
   res.json({ custom_groups: customGroupsWithMsgs, personal: personalChats });
+});
+
+// GET /api/chats/:chatId/stream — SSE real-time stream
+router.get("/chats/:chatId/stream", async (req: AuthRequest, res) => {
+  const { chatId } = req.params;
+  const userId = req.user!.id;
+
+  const { actualId } = await resolveActualChatId(chatId, userId);
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+
+  res.write("event: connected\ndata: {}\n\n");
+
+  const pingInterval = setInterval(() => {
+    res.write("event: ping\ndata: {}\n\n");
+  }, 25000);
+
+  const onMessage = (msg: object) => {
+    try {
+      res.write(`event: message\ndata: ${JSON.stringify(msg)}\n\n`);
+    } catch {}
+  };
+
+  chatEmitter.on(`chat:${actualId}`, onMessage);
+
+  req.on("close", () => {
+    clearInterval(pingInterval);
+    chatEmitter.off(`chat:${actualId}`, onMessage);
+  });
 });
 
 // POST /api/group-chats (admin only)
@@ -178,38 +209,46 @@ router.delete("/group-chats/:id", requireAdmin, async (req: AuthRequest, res) =>
   res.json({ ok: true });
 });
 
-// GET /api/chats/:chatId/messages
+// GET /api/chats/:chatId/messages — supports ?limit=&before= for pagination
 router.get("/chats/:chatId/messages", async (req: AuthRequest, res) => {
   const { chatId } = req.params;
   const userId = req.user!.id;
+  const limit = Math.min(Number(req.query.limit) || 100, 200);
+  const before = req.query.before as string | undefined;
 
   const { actualId } = await resolveActualChatId(chatId, userId);
 
+  const whereClause = before
+    ? and(eq(messagesTable.chat_id, actualId), lt(messagesTable.created_at, new Date(before)))
+    : eq(messagesTable.chat_id, actualId);
+
   const messages = await db
     .select({
-      id:            messagesTable.id,
-      content:       messagesTable.content,
-      content_type:  messagesTable.content_type,
-      is_deleted:    messagesTable.is_deleted,
-      created_at:    messagesTable.created_at,
-      edited_at:     messagesTable.edited_at,
-      sender_id:     messagesTable.sender_id,
-      sender_name:   usersTable.name,
-      sender_avatar: usersTable.avatar_url,
+      id:                messagesTable.id,
+      content:           messagesTable.content,
+      content_type:      messagesTable.content_type,
+      is_deleted:        messagesTable.is_deleted,
+      created_at:        messagesTable.created_at,
+      edited_at:         messagesTable.edited_at,
+      sender_id:         messagesTable.sender_id,
+      client_message_id: messagesTable.client_message_id,
+      sender_name:       usersTable.name,
+      sender_avatar:     usersTable.avatar_url,
     })
     .from(messagesTable)
     .innerJoin(usersTable, eq(messagesTable.sender_id, usersTable.id))
-    .where(eq(messagesTable.chat_id, actualId))
-    .orderBy(asc(messagesTable.created_at))
-    .limit(200);
+    .where(whereClause)
+    .orderBy(before ? desc(messagesTable.created_at) : asc(messagesTable.created_at))
+    .limit(limit);
 
-  res.json(messages.map(m => ({ ...m, outgoing: m.sender_id === userId })));
+  const result = before ? messages.reverse() : messages;
+  res.json(result.map(m => ({ ...m, outgoing: m.sender_id === userId })));
 });
 
 // POST /api/chats/:chatId/messages
 router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
   const { chatId } = req.params;
-  const { content, content_type = "text" } = req.body;
+  const { content, content_type = "text", client_message_id } = req.body;
   const userId = req.user!.id;
 
   if (!content) {
@@ -219,13 +258,41 @@ router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
 
   const { actualId, type, partnerUserId } = await resolveActualChatId(chatId, userId);
 
+  // Idempotency: return existing message if client_message_id already seen
+  if (client_message_id) {
+    const existing = await db
+      .select({
+        id:                messagesTable.id,
+        content:           messagesTable.content,
+        content_type:      messagesTable.content_type,
+        is_deleted:        messagesTable.is_deleted,
+        created_at:        messagesTable.created_at,
+        sender_id:         messagesTable.sender_id,
+        client_message_id: messagesTable.client_message_id,
+      })
+      .from(messagesTable)
+      .where(eq(messagesTable.client_message_id, client_message_id))
+      .limit(1);
+
+    if (existing.length > 0) {
+      const m = existing[0];
+      return res.json({
+        ...m,
+        outgoing:      true,
+        sender_name:   req.user!.name,
+        sender_avatar: req.user!.avatar_url,
+      });
+    }
+  }
+
   const [msg] = await db
     .insert(messagesTable)
     .values({
-      chat_id:      actualId,
-      sender_id:    userId,
+      chat_id:           actualId,
+      sender_id:         userId,
       content,
-      content_type: content_type as "text" | "image" | "voice",
+      content_type:      content_type as "text" | "image" | "voice",
+      client_message_id: client_message_id || null,
     })
     .returning();
 
@@ -238,7 +305,11 @@ router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
 
   res.json(response);
 
-  // Send push notifications asynchronously
+  // Broadcast via SSE to all clients in this chat
+  const ssePayload = { ...response, outgoing: false };
+  chatEmitter.emit(`chat:${actualId}`, ssePayload);
+
+  // Push notifications
   const notifContent = content_type === "image" ? "📷 Фото"
     : content_type === "voice" ? "🎤 Голосовое сообщение"
     : content.length > 80 ? content.slice(0, 80) + "…" : content;
@@ -276,6 +347,12 @@ router.delete("/messages/:id", async (req: AuthRequest, res) => {
   await db.update(messagesTable)
     .set({ is_deleted: true, content: "Сообщение удалено" })
     .where(eq(messagesTable.id, id));
+
+  // Notify SSE clients about deletion
+  chatEmitter.emit(`chat:${msg.chat_id}`, {
+    type:       "delete",
+    message_id: id,
+  });
 
   res.json({ ok: true });
 });

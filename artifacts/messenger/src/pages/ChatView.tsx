@@ -3,8 +3,6 @@ import { useLocation } from "wouter";
 import { api } from "@/api";
 import { useAuth } from "@/context/AuthContext";
 
-const GROUP_CHAT_ID = "00000000-0000-0000-0000-000000000001";
-
 const EMOJIS = [
   "😀","😂","😍","🥰","😎","😢","😡","🤔","😴","🤯",
   "👍","👎","👋","🙏","💪","🤝","🫂","✌️","🤞","👏",
@@ -13,6 +11,8 @@ const EMOJIS = [
   "🏊","🚴","🏃","🧘","🤽","🚣","⚽","🏋️","🎽","🥤",
   "✅","❌","⚠️","💬","📢","🔑","🗝️","📅","⏰","📍",
 ];
+
+type MsgStatus = "sending" | "sent" | "error";
 
 interface Message {
   id: string;
@@ -24,6 +24,15 @@ interface Message {
   sender_name: string;
   sender_avatar: string;
   outgoing: boolean;
+  client_message_id?: string;
+  status?: MsgStatus;
+  _localBlob?: string;
+}
+
+interface VoicePreview {
+  blob: Blob;
+  dataUrl: string;
+  durationSec: number;
 }
 
 interface ChatViewProps { id: string; forceGroup?: boolean; }
@@ -54,59 +63,180 @@ function getSupportedMimeType(): string {
   return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
 }
 
+function getDraftKey(chatId: string) { return `makswim_draft:${chatId}`; }
+
+function saveDraft(chatId: string, text: string) {
+  try {
+    if (text) { localStorage.setItem(getDraftKey(chatId), text); }
+    else { localStorage.removeItem(getDraftKey(chatId)); }
+  } catch {}
+}
+
+function loadDraft(chatId: string): string {
+  try { return localStorage.getItem(getDraftKey(chatId)) || ""; } catch { return ""; }
+}
+
 export default function ChatView({ id, forceGroup }: ChatViewProps) {
   const [, navigate] = useLocation();
   const { user } = useAuth();
-  const isGroup = forceGroup || id === GROUP_CHAT_ID;
+  const isGroup = forceGroup || false;
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState("");
+  const [inputText, setInputText] = useState(() => loadDraft(id));
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [chatName, setChatName] = useState(isGroup ? (forceGroup ? "Группа" : "Общий чат") : "");
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [chatName, setChatName] = useState(isGroup ? "Группа" : "");
   const [chatAvatar, setChatAvatar] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [voicePreview, setVoicePreview] = useState<VoicePreview | null>(null);
   const [toast, setToast] = useState("");
-  const [callState, setCallState] = useState<"idle" | "ringing" | "connected">("idle");
-  const [callType, setCallType] = useState<"audio" | "video">("audio");
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [sseConnected, setSseConnected] = useState(false);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sseRef = useRef<EventSource | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+
+  messagesRef.current = messages;
 
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   };
 
-  const loadMessages = useCallback(async () => {
+  // Offline detection
+  useEffect(() => {
+    const onOnline = () => setIsOnline(true);
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  // Draft auto-save
+  useEffect(() => {
+    saveDraft(id, inputText);
+  }, [id, inputText]);
+
+  const PAGE_SIZE = 60;
+
+  const loadMessages = useCallback(async (opts?: { silent?: boolean }) => {
     try {
-      const msgs = await api.chats.messages(id);
-      setMessages(msgs);
+      const msgs = await api.chats.messages(id, { limit: PAGE_SIZE });
+      setHasMore(msgs.length === PAGE_SIZE);
+
+      setMessages(prev => {
+        // Merge: keep optimistic messages, add server messages
+        const serverIds = new Set(msgs.map(m => m.id));
+        const optimistic = prev.filter(m => m.status === "sending" && !serverIds.has(m.id));
+        return [...msgs.map(m => ({ ...m, status: "sent" as MsgStatus })), ...optimistic];
+      });
+
       if (!isGroup && msgs.length > 0) {
         const other = msgs.find(m => !m.outgoing);
         if (other) { setChatName(other.sender_name); setChatAvatar(other.sender_avatar); }
       }
     } catch {}
-    finally { setLoading(false); }
+    finally { if (!opts?.silent) setLoading(false); }
   }, [id, isGroup]);
 
+  const loadOlderMessages = async () => {
+    const oldest = messages[0];
+    if (!oldest || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const older = await api.chats.messages(id, { limit: PAGE_SIZE, before: oldest.created_at });
+      setHasMore(older.length === PAGE_SIZE);
+      if (older.length > 0) {
+        setMessages(prev => [
+          ...older.map(m => ({ ...m, status: "sent" as MsgStatus })),
+          ...prev,
+        ]);
+      }
+    } catch {}
+    finally { setLoadingOlder(false); }
+  };
+
+  // SSE real-time connection
   useEffect(() => {
     setLoading(true);
+    setMessages([]);
+    setSseConnected(false);
     loadMessages();
-    const interval = setInterval(loadMessages, 3000);
-    return () => clearInterval(interval);
-  }, [loadMessages]);
+
+    // Connect SSE
+    const es = new EventSource(`/api/chats/${id}/stream`);
+    sseRef.current = es;
+
+    es.addEventListener("connected", () => {
+      setSseConnected(true);
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    });
+
+    es.addEventListener("message", (e) => {
+      try {
+        const data = JSON.parse(e.data) as (Message & { type?: string });
+        if (data.type === "delete") {
+          setMessages(prev => prev.map(m =>
+            m.id === (data as any).message_id
+              ? { ...m, content: "Сообщение удалено", is_deleted: true }
+              : m
+          ));
+          return;
+        }
+        setMessages(prev => {
+          if (prev.some(m => m.id === data.id)) return prev;
+          if (data.client_message_id && prev.some(m => m.client_message_id === data.client_message_id)) return prev;
+          return [...prev, { ...data, status: "sent" as MsgStatus }];
+        });
+      } catch {}
+    });
+
+    es.addEventListener("error", () => {
+      setSseConnected(false);
+      // Fall back to polling every 2s
+      if (!pollingRef.current) {
+        pollingRef.current = setInterval(() => loadMessages({ silent: true }), 2000);
+      }
+    });
+
+    es.addEventListener("ping", () => {});
+
+    return () => {
+      es.close();
+      sseRef.current = null;
+      setSseConnected(false);
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [id]);
+
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (messages.length > 0 && messages[messages.length - 1].status !== "sending") {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (messages.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length]);
 
   useEffect(() => {
     if (!isGroup && !chatName && !loading) {
@@ -117,22 +247,67 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     }
   }, [id, isGroup, chatName, loading]);
 
-  // Cleanup on unmount
   useEffect(() => () => {
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-    if (callTimerRef.current) clearInterval(callTimerRef.current);
     mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    sseRef.current?.close();
   }, []);
 
   async function sendMessage(content = inputText.trim(), type = "text") {
     if (!content || sending) return;
+    if (!isOnline) { showToast("Нет соединения"); return; }
+
+    const clientMsgId = crypto.randomUUID();
+    const optimisticMsg: Message = {
+      id: `opt-${clientMsgId}`,
+      content,
+      content_type: type,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      sender_id: user!.id,
+      sender_name: user!.name,
+      sender_avatar: user!.avatar_url,
+      outgoing: true,
+      client_message_id: clientMsgId,
+      status: "sending",
+    };
+
     if (type === "text") setInputText("");
+    setMessages(prev => [...prev, optimisticMsg]);
     setSending(true);
+
     try {
-      const msg = await api.chats.sendMessage(id, content, type) as Message;
-      setMessages(prev => [...prev, msg]);
-    } catch { showToast("Ошибка отправки"); }
-    finally { setSending(false); }
+      const msg = await api.chats.sendMessage(id, content, type, clientMsgId);
+      setMessages(prev => prev.map(m =>
+        m.client_message_id === clientMsgId
+          ? { ...msg, status: "sent" as MsgStatus }
+          : m
+      ));
+    } catch {
+      setMessages(prev => prev.map(m =>
+        m.client_message_id === clientMsgId ? { ...m, status: "error" as MsgStatus } : m
+      ));
+      if (type === "text") setInputText(content);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function retrySend(msg: Message) {
+    setMessages(prev => prev.map(m =>
+      m.client_message_id === msg.client_message_id ? { ...m, status: "sending" } : m
+    ));
+    try {
+      const sent = await api.chats.sendMessage(id, msg.content, msg.content_type, msg.client_message_id);
+      setMessages(prev => prev.map(m =>
+        m.client_message_id === msg.client_message_id ? { ...sent, status: "sent" as MsgStatus } : m
+      ));
+    } catch {
+      setMessages(prev => prev.map(m =>
+        m.client_message_id === msg.client_message_id ? { ...m, status: "error" } : m
+      ));
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -148,6 +323,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
+    if (file.size > 15 * 1024 * 1024) { showToast("Файл слишком большой (макс. 15MB)"); return; }
     try {
       setSending(true);
       const compressed = await compressImage(file);
@@ -155,63 +331,69 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     } catch { showToast("Ошибка загрузки фото"); setSending(false); }
   }
 
-  async function toggleRecording() {
-    if (isRecording) {
-      // Stop recording and send
-      if (!mediaRecorderRef.current) return;
-      if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
-      setIsRecording(false);
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getSupportedMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.start(200);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
       setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+    } catch { showToast("Нет доступа к микрофону"); }
+  }
 
-      await new Promise<void>(resolve => {
-        const recorder = mediaRecorderRef.current!;
-        const mimeType = recorder.mimeType || "audio/webm";
-        recorder.onstop = async () => {
-          const blob = new Blob(audioChunksRef.current, { type: mimeType });
-          recorder.stream.getTracks().forEach(t => t.stop());
-          const reader = new FileReader();
-          reader.onload = async () => {
-            try {
-              await sendMessage(reader.result as string, "voice");
-            } catch { showToast("Ошибка отправки голосового"); }
-            resolve();
-          };
-          reader.onerror = () => { showToast("Ошибка обработки записи"); resolve(); };
-          reader.readAsDataURL(blob);
-        };
-        recorder.stop();
-      });
-    } else {
-      // Start recording
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = getSupportedMimeType();
-        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-        audioChunksRef.current = [];
-        recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
-        recorder.start(200);
-        mediaRecorderRef.current = recorder;
-        setIsRecording(true);
-        setRecordingTime(0);
-        recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-      } catch { showToast("Нет доступа к микрофону"); }
+  function cancelRecording() {
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    setIsRecording(false);
+    setRecordingTime(0);
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+      mediaRecorderRef.current = null;
     }
+    audioChunksRef.current = [];
   }
 
-  function startCall(type: "audio" | "video") {
-    setCallType(type);
-    setCallState("ringing");
-    callTimerRef.current = setTimeout(() => {
-      setCallState("connected");
-      if (callTimerRef.current) clearTimeout(callTimerRef.current);
-      callTimerRef.current = setInterval(() => {}, 1000);
-    }, 3000) as unknown as ReturnType<typeof setInterval>;
+  async function stopRecordingForPreview() {
+    if (!mediaRecorderRef.current) return;
+    if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+    const duration = recordingTime;
+    setIsRecording(false);
+    setRecordingTime(0);
+
+    await new Promise<void>(resolve => {
+      const recorder = mediaRecorderRef.current!;
+      const mimeType = recorder.mimeType || "audio/webm";
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        recorder.stream.getTracks().forEach(t => t.stop());
+        mediaRecorderRef.current = null;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          setVoicePreview({ blob, dataUrl: reader.result as string, durationSec: duration });
+          resolve();
+        };
+        reader.onerror = () => { showToast("Ошибка обработки записи"); resolve(); };
+        reader.readAsDataURL(blob);
+      };
+      recorder.stop();
+    });
   }
 
-  function endCall() {
-    if (callTimerRef.current) { clearTimeout(callTimerRef.current); clearInterval(callTimerRef.current); }
-    setCallState("idle");
-    showToast("Звонок завершён");
+  async function sendVoicePreview() {
+    if (!voicePreview) return;
+    const { dataUrl } = voicePreview;
+    setVoicePreview(null);
+    await sendMessage(dataUrl, "voice");
+  }
+
+  function discardVoicePreview() {
+    setVoicePreview(null);
+    audioChunksRef.current = [];
   }
 
   function showContextMenu(e: React.MouseEvent, msgId: string) {
@@ -227,7 +409,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
       setMessages(prev => prev.map(m =>
         m.id === contextMenu.msgId ? { ...m, content: "Сообщение удалено", is_deleted: true } : m
       ));
-    } catch {}
+    } catch { showToast("Ошибка удаления"); }
     setContextMenu(null);
   }
 
@@ -247,59 +429,12 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
           style={{ background: "#46eedd" }}>{toast}</div>
       )}
 
-      {/* Call Overlay */}
-      {callState !== "idle" && (
-        <div className="fixed inset-0 z-[9000] flex flex-col items-center justify-center gap-8"
-          style={{ background: "rgba(10,14,22,0.97)", backdropFilter: "blur(32px)" }}>
-
-          {/* Pulsing rings */}
-          <div className="relative flex items-center justify-center">
-            {callState === "ringing" && (
-              <>
-                <div className="absolute w-36 h-36 rounded-full animate-ping opacity-20"
-                  style={{ background: "#46eedd" }} />
-                <div className="absolute w-28 h-28 rounded-full animate-ping opacity-30 animation-delay-300"
-                  style={{ background: "#46eedd", animationDelay: "0.3s" }} />
-              </>
-            )}
-            <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-[#46eedd]/40 z-10">
-              {chatAvatar
-                ? <img src={chatAvatar} alt="" className="w-full h-full object-cover" />
-                : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
-                    <span className="text-[40px] font-black text-[#bacac6]/30">{chatName.charAt(0)}</span>
-                  </div>}
-            </div>
-          </div>
-
-          <div className="text-center">
-            <h2 className="text-[24px] font-bold text-[#e1e2eb]">{chatName}</h2>
-            <p className="text-[#46eedd] text-[15px] mt-2 font-semibold">
-              {callState === "ringing"
-                ? (callType === "video" ? "🎥 Видеозвонок..." : "📞 Вызов...")
-                : (callType === "video" ? "🎥 Видеозвонок" : "📞 Разговор")}
-            </p>
-            {callState === "connected" && (
-              <p className="text-[#bacac6]/50 text-[13px] mt-1">Соединено</p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-8">
-            {callState === "connected" && callType === "video" && (
-              <button className="w-14 h-14 rounded-full bg-[#1d2026] flex items-center justify-center text-[#bacac6] active:scale-90 transition-all">
-                <span className="material-symbols-outlined text-[24px]">videocam_off</span>
-              </button>
-            )}
-            <button onClick={endCall}
-              className="w-16 h-16 rounded-full flex items-center justify-center active:scale-90 transition-all"
-              style={{ background: "#ff4444", boxShadow: "0 8px 24px rgba(255,68,68,0.4)" }}>
-              <span className="material-symbols-outlined text-white text-[30px]" style={{ fontVariationSettings: "'FILL' 1" }}>call_end</span>
-            </button>
-            {callState === "connected" && (
-              <button className="w-14 h-14 rounded-full bg-[#1d2026] flex items-center justify-center text-[#bacac6] active:scale-90 transition-all">
-                <span className="material-symbols-outlined text-[24px]">mic_off</span>
-              </button>
-            )}
-          </div>
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="fixed top-0 left-0 right-0 z-[9998] flex items-center justify-center gap-2 py-2 text-[13px] font-bold"
+          style={{ background: "#ff4444", color: "#fff" }}>
+          <span className="material-symbols-outlined text-[16px]">wifi_off</span>
+          Нет соединения
         </div>
       )}
 
@@ -331,9 +466,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
                   <div className="w-10 h-10 rounded-full flex items-center justify-center"
                     style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
                     <span className="material-symbols-outlined text-[#003732] text-[20px]"
-                      style={{ fontVariationSettings: "'FILL' 1" }}>
-                      {forceGroup ? "group" : "sync"}
-                    </span>
+                      style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
                   </div>
                 ) : chatAvatar ? (
                   <img alt={chatName} className="w-10 h-10 rounded-full object-cover border border-white/10" src={chatAvatar} />
@@ -342,29 +475,37 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
                     <span className="text-[16px] font-black text-[#bacac6]/50">{chatName.charAt(0).toUpperCase()}</span>
                   </div>
                 )}
-                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#46eedd] rounded-full border-2 border-[#10131a]" />
+                <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[#10131a] ${isOnline ? "bg-[#46eedd]" : "bg-[#bacac6]/30"}`} />
               </div>
               <div>
                 <h1 className="text-[15px] font-bold text-[#e1e2eb] leading-tight">{chatName || "..."}</h1>
-                <span className="text-[11px] text-[#46eedd] font-semibold uppercase tracking-wider">В сети</span>
+                <span className={`text-[11px] font-semibold uppercase tracking-wider ${sseConnected ? "text-[#46eedd]" : "text-[#bacac6]/40"}`}>
+                  {sseConnected ? "В сети" : "Обновление..."}
+                </span>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-1">
-            <button onClick={() => startCall("audio")}
-              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
-              <span className="material-symbols-outlined text-[22px]">call</span>
-            </button>
-            <button onClick={() => startCall("video")}
-              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
-              <span className="material-symbols-outlined text-[22px]">videocam</span>
-            </button>
           </div>
         </div>
       </header>
 
       {/* Messages */}
-      <main className="flex-1 px-4 max-w-lg mx-auto w-full overflow-y-auto chat-scroll flex flex-col gap-4 pt-4 mt-20 mb-28">
+      <main className="flex-1 px-4 max-w-lg mx-auto w-full overflow-y-auto chat-scroll flex flex-col gap-4 pt-4 mt-20 mb-36">
+
+        {/* Load older button */}
+        {hasMore && !loading && (
+          <div className="flex justify-center mt-2">
+            <button
+              onClick={loadOlderMessages}
+              disabled={loadingOlder}
+              className="px-4 py-2 rounded-2xl text-[12px] font-bold text-[#46eedd] transition-all disabled:opacity-50"
+              style={{ background: "rgba(70,238,221,0.08)" }}>
+              {loadingOlder
+                ? <span className="flex items-center gap-2"><div className="w-3 h-3 border border-[#46eedd]/30 border-t-[#46eedd] rounded-full animate-spin" /> Загрузка...</span>
+                : "↑ Загрузить старые сообщения"}
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="w-8 h-8 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
@@ -376,58 +517,82 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
           </div>
         ) : (
           <>
-            <div className="flex justify-center my-2">
-              <span className="px-4 py-1 rounded-full text-[#bacac6] text-[11px] font-bold uppercase tracking-widest"
-                style={{ background: "rgba(39,42,49,0.5)", backdropFilter: "blur(8px)" }}>
-                Сегодня
-              </span>
-            </div>
+            {messages.map((msg, idx) => {
+              const prevMsg = messages[idx - 1];
+              const showDateSep = !prevMsg || new Date(msg.created_at).toDateString() !== new Date(prevMsg.created_at).toDateString();
 
-            {messages.map(msg => (
-              <div key={msg.id}
-                className={`flex flex-col max-w-[88%] group relative ${msg.outgoing ? "items-end self-end" : "items-start"}`}>
-                {isGroup && !msg.outgoing && (
-                  <span className="text-[11px] text-[#46eedd] font-semibold ml-1 mb-1">{msg.sender_name}</span>
-                )}
+              return (
+                <div key={msg.id}>
+                  {showDateSep && (
+                    <div className="flex justify-center my-2">
+                      <span className="px-4 py-1 rounded-full text-[#bacac6] text-[11px] font-bold uppercase tracking-widest"
+                        style={{ background: "rgba(39,42,49,0.5)", backdropFilter: "blur(8px)" }}>
+                        {new Date(msg.created_at).toLocaleDateString("ru", { day: "numeric", month: "long" })}
+                      </span>
+                    </div>
+                  )}
 
-                {msg.content_type === "image" && !msg.is_deleted ? (
-                  <div className={`rounded-2xl overflow-hidden cursor-pointer shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none"}`}
-                    style={{ maxWidth: 240 }}
-                    onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
-                    <img src={msg.content} alt="фото" className="w-full h-auto block" style={{ maxWidth: 240 }} />
-                  </div>
-                ) : msg.content_type === "voice" && !msg.is_deleted ? (
-                  <div className={`p-3 rounded-2xl shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none bg-[#272a31]"}`}
-                    style={msg.outgoing ? { background: "linear-gradient(135deg, #46eedd, #00d1c1)" } : {}}
-                    onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[20px]"
-                        style={{ color: msg.outgoing ? "#003732" : "#46eedd", fontVariationSettings: "'FILL' 1" }}>mic</span>
-                      <audio controls src={msg.content} className="h-8" style={{ maxWidth: 180 }} />
+                  <div
+                    className={`flex flex-col max-w-[88%] group relative ${msg.outgoing ? "items-end self-end ml-auto" : "items-start"}`}>
+                    {isGroup && !msg.outgoing && (
+                      <span className="text-[11px] text-[#46eedd] font-semibold ml-1 mb-1">{msg.sender_name}</span>
+                    )}
+
+                    {msg.content_type === "image" && !msg.is_deleted ? (
+                      <div className={`rounded-2xl overflow-hidden cursor-pointer shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none"} ${msg.status === "sending" ? "opacity-70" : ""}`}
+                        style={{ maxWidth: 240 }}
+                        onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
+                        <img src={msg.content} alt="фото" className="w-full h-auto block" style={{ maxWidth: 240 }} />
+                      </div>
+                    ) : msg.content_type === "voice" && !msg.is_deleted ? (
+                      <div className={`p-3 rounded-2xl shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none bg-[#272a31]"} ${msg.status === "sending" ? "opacity-70" : ""}`}
+                        style={msg.outgoing ? { background: "linear-gradient(135deg, #46eedd, #00d1c1)" } : {}}
+                        onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
+                        <div className="flex items-center gap-2">
+                          <span className="material-symbols-outlined text-[20px]"
+                            style={{ color: msg.outgoing ? "#003732" : "#46eedd", fontVariationSettings: "'FILL' 1" }}>mic</span>
+                          <audio controls src={msg.content} className="h-8" style={{ maxWidth: 180 }} />
+                        </div>
+                      </div>
+                    ) : msg.outgoing ? (
+                      <div className={`message-bubble p-3.5 rounded-2xl rounded-br-none shadow-lg cursor-pointer ${msg.is_deleted ? "opacity-50" : ""} ${msg.status === "sending" ? "opacity-70" : ""}`}
+                        style={{ background: msg.is_deleted ? "#272a31" : "linear-gradient(135deg, #46eedd, #00d1c1)" }}
+                        onClick={e => !msg.is_deleted && msg.status !== "sending" && showContextMenu(e, msg.id)}>
+                        <p className={`text-[15px] leading-[1.4] font-medium ${msg.is_deleted ? "italic text-[#bacac6]/60" : "text-[#003732]"}`}>
+                          {msg.content}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className={`message-bubble bg-[#272a31] p-3.5 rounded-2xl rounded-bl-none shadow-sm cursor-pointer ${msg.is_deleted ? "opacity-50" : ""}`}
+                        onClick={e => !msg.is_deleted && (user?.role === "admin") && showContextMenu(e, msg.id)}>
+                        <p className={`text-[15px] leading-[1.4] ${msg.is_deleted ? "italic text-[#bacac6]/40" : "text-[#e1e2eb]"}`}>
+                          {msg.content}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className={`flex items-center gap-1.5 mt-1.5 px-1 ${msg.outgoing ? "flex-row-reverse" : ""}`}>
+                      <span className="text-[10px] text-[#bacac6]/50 font-medium">{formatTime(msg.created_at)}</span>
+                      {msg.outgoing && (
+                        <>
+                          {msg.status === "sending" && (
+                            <div className="w-3 h-3 border border-[#bacac6]/30 border-t-[#bacac6]/70 rounded-full animate-spin" />
+                          )}
+                          {msg.status === "sent" && (
+                            <span className="material-symbols-outlined text-[12px] text-[#46eedd]/60" style={{ fontVariationSettings: "'FILL' 1" }}>done_all</span>
+                          )}
+                          {msg.status === "error" && (
+                            <button onClick={() => retrySend(msg)} title="Нажмите для повторной отправки">
+                              <span className="material-symbols-outlined text-[14px] text-[#ffb4ab]">error</span>
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
-                ) : msg.outgoing ? (
-                  <div className={`message-bubble p-3.5 rounded-2xl rounded-br-none shadow-lg cursor-pointer ${msg.is_deleted ? "opacity-50" : ""}`}
-                    style={{ background: msg.is_deleted ? "#272a31" : "linear-gradient(135deg, #46eedd, #00d1c1)" }}
-                    onClick={e => !msg.is_deleted && showContextMenu(e, msg.id)}>
-                    <p className={`text-[15px] leading-[1.4] font-medium ${msg.is_deleted ? "italic text-[#bacac6]/60" : "text-[#003732]"}`}>
-                      {msg.content}
-                    </p>
-                  </div>
-                ) : (
-                  <div className={`message-bubble bg-[#272a31] p-3.5 rounded-2xl rounded-bl-none shadow-sm cursor-pointer ${msg.is_deleted ? "opacity-50" : ""}`}
-                    onClick={e => !msg.is_deleted && (user?.role === "admin") && showContextMenu(e, msg.id)}>
-                    <p className={`text-[15px] leading-[1.4] ${msg.is_deleted ? "italic text-[#bacac6]/40" : "text-[#e1e2eb]"}`}>
-                      {msg.content}
-                    </p>
-                  </div>
-                )}
-
-                <div className={`flex items-center gap-1.5 mt-1.5 px-1 ${msg.outgoing ? "flex-row-reverse" : ""}`}>
-                  <span className="text-[10px] text-[#bacac6]/50 font-medium">{formatTime(msg.created_at)}</span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
         <div ref={bottomRef} />
@@ -452,6 +617,24 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
         style={{ background: "rgba(16,19,26,0.95)", backdropFilter: "blur(24px)" }}>
         <div className="max-w-lg mx-auto">
 
+          {/* Voice Preview */}
+          {voicePreview && (
+            <div className="flex items-center gap-3 px-3 py-3 mb-2 rounded-2xl"
+              style={{ background: "rgba(70,238,221,0.08)", border: "1px solid rgba(70,238,221,0.2)" }}>
+              <span className="material-symbols-outlined text-[#46eedd] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
+              <audio controls src={voicePreview.dataUrl} className="flex-1 h-8" />
+              <button onClick={discardVoicePreview}
+                className="w-8 h-8 flex items-center justify-center rounded-full text-[#ffb4ab] hover:bg-[#ffb4ab]/10 transition-colors">
+                <span className="material-symbols-outlined text-[18px]">delete</span>
+              </button>
+              <button onClick={sendVoicePreview} disabled={sending}
+                className="w-9 h-9 flex items-center justify-center rounded-full disabled:opacity-50"
+                style={{ background: "#46eedd" }}>
+                <span className="material-symbols-outlined text-[#003732] text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>send</span>
+              </button>
+            </div>
+          )}
+
           {/* Recording indicator */}
           {isRecording && (
             <div className="flex items-center justify-between px-3 py-2.5 mb-2 rounded-2xl"
@@ -460,64 +643,62 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
                 <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
                 <span className="text-red-400 text-[13px] font-bold">REC {formatRecordingTime(recordingTime)}</span>
               </div>
-              <button onClick={toggleRecording}
-                className="flex items-center gap-1.5 text-red-400 text-[12px] font-bold px-3 py-1.5 rounded-full"
-                style={{ background: "rgba(255,68,68,0.15)" }}>
-                <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>send</span>
-                Отправить
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={cancelRecording}
+                  className="flex items-center gap-1 text-[#bacac6]/50 text-[12px] font-bold px-2.5 py-1.5 rounded-full"
+                  style={{ background: "rgba(186,202,198,0.1)" }}>
+                  <span className="material-symbols-outlined text-[14px]">close</span>
+                  Отмена
+                </button>
+                <button onClick={stopRecordingForPreview}
+                  className="flex items-center gap-1 text-[#46eedd] text-[12px] font-bold px-3 py-1.5 rounded-full"
+                  style={{ background: "rgba(70,238,221,0.15)" }}>
+                  <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop_circle</span>
+                  Стоп
+                </button>
+              </div>
             </div>
           )}
 
           <div className="flex items-center gap-2">
-            {/* Emoji button */}
             <button onClick={e => { e.stopPropagation(); setShowEmojiPicker(v => !v); }}
               className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] hover:text-[#46eedd] active:bg-[#1d2026] transition-colors shrink-0">
               <span className="material-symbols-outlined text-[22px]">emoji_emotions</span>
             </button>
 
-            {/* Image upload */}
             <button onClick={() => fileInputRef.current?.click()}
               className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] hover:text-[#46eedd] active:bg-[#1d2026] transition-colors shrink-0">
               <span className="material-symbols-outlined text-[22px]">image</span>
             </button>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
 
-            {/* Text input */}
             <div className="flex-1 relative">
               <input
                 className="w-full bg-[#1d2026] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[15px] outline-none"
-                placeholder="Сообщение..."
+                placeholder={isOnline ? "Сообщение..." : "Нет соединения..."}
                 value={inputText}
                 onChange={e => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
                 style={{ caretColor: "#46eedd" }}
+                disabled={!isOnline || isRecording || !!voicePreview}
               />
             </div>
 
-            {/* Voice / Send */}
             {inputText.trim() ? (
-              <button onClick={() => sendMessage()} disabled={sending}
+              <button onClick={() => sendMessage()} disabled={sending || !isOnline}
                 className="w-12 h-12 flex items-center justify-center bg-[#46eedd] text-[#003732] rounded-2xl active:scale-90 transition-all disabled:opacity-40 shrink-0"
-                style={{ boxShadow: "0 4px 16px rgba(70,238,221,0.25)" }}>
+                style={{ boxShadow: "0 4px 16px rgba(70,238,221,0.3)" }}>
                 {sending
                   ? <div className="w-5 h-5 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" />
-                  : <span className="material-symbols-outlined font-bold text-[24px]"
-                      style={{ fontVariationSettings: "'FILL' 1" }}>send</span>}
+                  : <span className="material-symbols-outlined text-[22px]" style={{ fontVariationSettings: "'FILL' 1" }}>send</span>}
               </button>
-            ) : (
-              <button
-                onClick={toggleRecording}
-                className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all shrink-0 active:scale-90 ${
-                  isRecording ? "animate-pulse" : "bg-[#1d2026] text-[#bacac6] hover:text-[#46eedd]"
-                }`}
-                style={isRecording ? { background: "#ff4444" } : {}}>
-                <span className="material-symbols-outlined text-[24px] text-white"
-                  style={!isRecording ? { color: "inherit" } : { fontVariationSettings: "'FILL' 1" }}>
-                  {isRecording ? "stop" : "mic"}
-                </span>
+            ) : !isRecording && !voicePreview ? (
+              <button onClick={startRecording} disabled={!isOnline}
+                className="w-12 h-12 flex items-center justify-center rounded-2xl active:scale-90 transition-all disabled:opacity-40 shrink-0"
+                style={{ background: "#272a31" }}>
+                <span className="material-symbols-outlined text-[22px] text-[#bacac6]">mic</span>
               </button>
-            )}
+            ) : null}
           </div>
         </div>
       </div>

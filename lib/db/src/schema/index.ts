@@ -18,6 +18,9 @@ export const inviteCodesTable = pgTable("invite_codes", {
   used_at:      timestamp("used_at"),
   created_by:   uuid("created_by"),
   created_at:   timestamp("created_at").notNull().defaultNow(),
+  expires_at:   timestamp("expires_at"),
+  is_revoked:   boolean("is_revoked").notNull().default(false),
+  revoked_at:   timestamp("revoked_at"),
 });
 
 // ── users ─────────────────────────────────────────────────────────────────
@@ -58,14 +61,15 @@ export const chatMembersTable = pgTable("chat_members", {
 
 // ── messages ──────────────────────────────────────────────────────────────
 export const messagesTable = pgTable("messages", {
-  id:           uuid("id").primaryKey().defaultRandom(),
-  chat_id:      text("chat_id").notNull(),
-  sender_id:    uuid("sender_id").notNull(),
-  content:      text("content").notNull(),
-  content_type: msgTypeEnum("content_type").notNull().default("text"),
-  is_deleted:   boolean("is_deleted").notNull().default(false),
-  edited_at:    timestamp("edited_at"),
-  created_at:   timestamp("created_at").notNull().defaultNow(),
+  id:                uuid("id").primaryKey().defaultRandom(),
+  chat_id:           text("chat_id").notNull(),
+  sender_id:         uuid("sender_id").notNull(),
+  content:           text("content").notNull(),
+  content_type:      msgTypeEnum("content_type").notNull().default("text"),
+  is_deleted:        boolean("is_deleted").notNull().default(false),
+  edited_at:         timestamp("edited_at"),
+  created_at:        timestamp("created_at").notNull().defaultNow(),
+  client_message_id: text("client_message_id").unique(),
 });
 
 // ── training_events ───────────────────────────────────────────────────────
