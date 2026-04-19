@@ -14,6 +14,7 @@ runButton = "Project"
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
+integrations = ["github:1.0.0"]
 
 [postMerge]
 path = "scripts/post-merge.sh"
@@ -37,3 +38,6 @@ externalPort = 3000
 VAPID_PUBLIC_KEY = "BBvfXND5j3EOR59vhIBfOBudd5ONjo-fth_bG14tl8jMxyu2wmfWoiaqZjlg1Dm3p2xf0g9kZEytZUhMdgZm4x0"
 VAPID_PRIVATE_KEY = "k4BsNuYR18HY_Z83y9rICllCKeTSGohSHCU7bDlbmSE"
 VAPID_SUBJECT = "mailto:admin@makswim.app"
+
+[nix]
+channel = "stable-25_05"
