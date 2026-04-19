@@ -98,6 +98,16 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sseConnected, setSseConnected] = useState(false);
 
+  // Manage members (group + admin only)
+  const [showManage, setShowManage] = useState(false);
+  const [manageTab, setManageTab] = useState<"members" | "add">("members");
+  const [chatMembers, setChatMembers] = useState<{ id: string; name: string; avatar_url: string; role: string }[]>([]);
+  const [addCandidates, setAddCandidates] = useState<{ id: string; name: string; avatar_url: string; role: string }[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [addSelected, setAddSelected] = useState<Set<string>>(new Set());
+  const [addingMembers, setAddingMembers] = useState(false);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -396,6 +406,54 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     audioChunksRef.current = [];
   }
 
+  async function openManageMembers() {
+    setShowManage(true);
+    setManageTab("members");
+    setAddSelected(new Set());
+    setMembersLoading(true);
+    try {
+      const [members, allUsers] = await Promise.all([
+        api.chats.groupMembers(id),
+        api.members.list(),
+      ]);
+      setChatMembers(members);
+      const memberIds = new Set(members.map(m => m.id));
+      setAddCandidates(allUsers.filter(u => !memberIds.has(u.id)));
+    } catch { showToast("Не удалось загрузить участников"); }
+    finally { setMembersLoading(false); }
+  }
+
+  async function removeMember(userId: string) {
+    setRemovingMemberId(userId);
+    try {
+      await api.chats.removeGroupMember(id, userId);
+      const removed = chatMembers.find(m => m.id === userId);
+      setChatMembers(prev => prev.filter(m => m.id !== userId));
+      if (removed) setAddCandidates(prev => [...prev, removed].sort((a, b) => a.name.localeCompare(b.name)));
+      showToast("Участник удалён");
+    } catch { showToast("Ошибка"); }
+    finally { setRemovingMemberId(null); }
+  }
+
+  async function addSelectedMembers() {
+    if (addSelected.size === 0) return;
+    setAddingMembers(true);
+    try {
+      await api.chats.addGroupMembers(id, [...addSelected]);
+      const added = addCandidates.filter(u => addSelected.has(u.id));
+      setChatMembers(prev => [...prev, ...added].sort((a, b) => a.name.localeCompare(b.name)));
+      setAddCandidates(prev => prev.filter(u => !addSelected.has(u.id)));
+      setAddSelected(new Set());
+      setManageTab("members");
+      showToast(`Добавлено: ${added.length}`);
+    } catch { showToast("Ошибка добавления"); }
+    finally { setAddingMembers(false); }
+  }
+
+  function toggleAddSelect(uid: string) {
+    setAddSelected(prev => { const n = new Set(prev); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
+  }
+
   function showContextMenu(e: React.MouseEvent, msgId: string) {
     e.preventDefault();
     e.stopPropagation();
@@ -451,6 +509,146 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
         </div>
       )}
 
+      {/* Manage Members Modal */}
+      {showManage && isGroup && user?.role === "admin" && (
+        <div className="fixed inset-0 z-[400] flex items-end justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
+          onClick={() => setShowManage(false)}>
+          <div className="w-full max-w-lg rounded-[2rem] flex flex-col"
+            style={{ background: "#1d2026", maxHeight: "80vh" }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Modal header */}
+            <div className="flex items-center gap-3 p-5 pb-4 border-b border-white/5">
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
+                style={{ background: "rgba(70,238,221,0.1)" }}>
+                <span className="material-symbols-outlined text-[#46eedd] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-[16px] text-[#e1e2eb] truncate">{chatName}</h3>
+                <p className="text-[12px] text-[#bacac6]/50">
+                  {membersLoading ? "Загрузка..." : `${chatMembers.length} участников`}
+                </p>
+              </div>
+              <button onClick={() => setShowManage(false)}
+                className="w-9 h-9 flex items-center justify-center rounded-xl text-[#bacac6]/50 hover:text-[#e1e2eb] transition-colors">
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 p-3 border-b border-white/5">
+              <button onClick={() => setManageTab("members")}
+                className="flex-1 py-2 rounded-xl text-[13px] font-bold transition-all"
+                style={manageTab === "members"
+                  ? { background: "rgba(70,238,221,0.15)", color: "#46eedd" }
+                  : { color: "#bacac6" }}>
+                Участники
+              </button>
+              <button onClick={() => setManageTab("add")}
+                className="flex-1 py-2 rounded-xl text-[13px] font-bold transition-all flex items-center justify-center gap-1"
+                style={manageTab === "add"
+                  ? { background: "rgba(70,238,221,0.15)", color: "#46eedd" }
+                  : { color: "#bacac6" }}>
+                <span className="material-symbols-outlined text-[16px]">person_add</span>
+                Добавить
+                {addCandidates.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold"
+                    style={{ background: "rgba(70,238,221,0.2)" }}>
+                    {addCandidates.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Tab content */}
+            <div className="flex-1 overflow-y-auto p-3" style={{ minHeight: 0 }}>
+              {membersLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
+                </div>
+              ) : manageTab === "members" ? (
+                chatMembers.length === 0 ? (
+                  <div className="flex flex-col items-center py-8 gap-2 text-center">
+                    <span className="material-symbols-outlined text-[36px] text-[#bacac6]/20">group_off</span>
+                    <p className="text-[13px] text-[#bacac6]/40">Нет участников</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {chatMembers.map(m => (
+                      <div key={m.id} className="flex items-center gap-3 p-3 rounded-2xl" style={{ background: "#10131a" }}>
+                        <div className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] shrink-0 flex items-center justify-center">
+                          {m.avatar_url
+                            ? <img src={m.avatar_url} alt="" className="w-full h-full object-cover" />
+                            : <span className="font-bold text-[#bacac6]/50 text-[13px]">{m.name.charAt(0)}</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-[14px] text-[#e1e2eb] truncate">{m.name}</p>
+                          {m.role === "admin" && <p className="text-[11px] text-[#46eedd]/70">Администратор</p>}
+                        </div>
+                        <button onClick={() => removeMember(m.id)} disabled={removingMemberId === m.id}
+                          className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/30 hover:text-red-400 hover:bg-[#ffb4ab]/10 transition-all disabled:opacity-40"
+                          title="Удалить из чата">
+                          {removingMemberId === m.id
+                            ? <div className="w-3 h-3 border border-[#bacac6]/30 border-t-[#bacac6] rounded-full animate-spin" />
+                            : <span className="material-symbols-outlined text-[18px]">person_remove</span>}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
+                addCandidates.length === 0 ? (
+                  <div className="flex flex-col items-center py-8 gap-2 text-center">
+                    <span className="material-symbols-outlined text-[36px] text-[#bacac6]/20">done_all</span>
+                    <p className="text-[13px] text-[#bacac6]/40">Все пользователи уже в чате</p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-[11px] font-bold text-[#bacac6]/50 uppercase tracking-wider mb-3 px-1">
+                      {addSelected.size > 0 ? `${addSelected.size} выбрано` : "Выберите участников"}
+                    </p>
+                    <div className="space-y-1">
+                      {addCandidates.map(m => {
+                        const sel = addSelected.has(m.id);
+                        return (
+                          <button key={m.id} onClick={() => toggleAddSelect(m.id)}
+                            className="w-full flex items-center gap-3 p-3 rounded-2xl transition-all text-left"
+                            style={{ background: sel ? "rgba(70,238,221,0.1)" : "#10131a" }}>
+                            <div className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] shrink-0 flex items-center justify-center">
+                              {m.avatar_url
+                                ? <img src={m.avatar_url} alt="" className="w-full h-full object-cover" />
+                                : <span className="font-bold text-[#bacac6]/50 text-[13px]">{m.name.charAt(0)}</span>}
+                            </div>
+                            <span className="flex-1 text-[14px] font-medium text-[#e1e2eb] truncate">{m.name}</span>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all shrink-0 ${sel ? "border-[#46eedd] bg-[#46eedd]" : "border-[#bacac6]/30"}`}>
+                              {sel && <span className="material-symbols-outlined text-[12px] text-[#003732]" style={{ fontVariationSettings: "'FILL' 1" }}>check</span>}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )
+              )}
+            </div>
+
+            {/* Add button */}
+            {manageTab === "add" && addSelected.size > 0 && (
+              <div className="p-4 pt-2 border-t border-white/5">
+                <button onClick={addSelectedMembers} disabled={addingMembers}
+                  className="w-full py-3.5 rounded-2xl font-bold text-[15px] text-[#003732] disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
+                  {addingMembers
+                    ? <><div className="w-4 h-4 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" /> Добавляю...</>
+                    : <><span className="material-symbols-outlined text-[18px]">person_add</span> Добавить {addSelected.size}</>}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/5"
         style={{ background: "rgba(16,19,26,0.92)", backdropFilter: "blur(24px)" }}>
@@ -485,6 +683,16 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
               </div>
             </div>
           </div>
+
+          {/* Admin manage button — only in group chats */}
+          {isGroup && user?.role === "admin" && (
+            <button
+              onClick={() => openManageMembers()}
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-[#bacac6]/50 hover:text-[#46eedd] hover:bg-[#1d2026] transition-all active:scale-95"
+              title="Управление участниками">
+              <span className="material-symbols-outlined text-[22px]">manage_accounts</span>
+            </button>
+          )}
         </div>
       </header>
 
