@@ -44,7 +44,6 @@ export const api = {
   chats: {
     list: () =>
       apiFetch<{
-        group: { id: string; name: string; last_msg: string | null; last_time: string | null };
         custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
         personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
       }>("/chats"),
@@ -66,6 +65,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
+    deleteGroup: (chatId: string) =>
+      apiFetch(`/group-chats/${chatId}`, { method: "DELETE" }),
   },
 
   members: {

@@ -4,8 +4,6 @@ import { api } from "@/api";
 import { useAuth } from "@/context/AuthContext";
 import BottomNav from "@/components/BottomNav";
 
-const GROUP_CHAT_ID = "00000000-0000-0000-0000-000000000001";
-
 function formatTime(iso: string | null) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -17,7 +15,6 @@ function formatTime(iso: string | null) {
 }
 
 interface ChatsData {
-  group: { id: string; name: string; last_msg: string | null; last_time: string | null } | null;
   custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
   personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
 }
@@ -27,13 +24,15 @@ export default function ChatsList() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [search, setSearch] = useState("");
-  const [chatsData, setChatsData] = useState<ChatsData>({ group: null, custom_groups: [], personal: [] });
+  const [chatsData, setChatsData] = useState<ChatsData>({ custom_groups: [], personal: [] });
   const [loading, setLoading] = useState(true);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [allMembers, setAllMembers] = useState<{ id: string; name: string; avatar_url: string }[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null);
 
   const loadChats = () =>
     api.chats.list()
@@ -43,7 +42,7 @@ export default function ChatsList() {
 
   useEffect(() => {
     loadChats();
-    const iv = setInterval(loadChats, 5000);
+    const iv = setInterval(loadChats, 4000);
     return () => clearInterval(iv);
   }, []);
 
@@ -67,6 +66,21 @@ export default function ChatsList() {
     finally { setCreating(false); }
   }
 
+  async function deleteGroup(chatId: string) {
+    setDeletingId(chatId);
+    try {
+      await api.chats.deleteGroup(chatId);
+      setChatsData(prev => ({
+        ...prev,
+        custom_groups: prev.custom_groups.filter(g => g.id !== chatId),
+      }));
+    } catch {}
+    finally {
+      setDeletingId(null);
+      setConfirmDelete(null);
+    }
+  }
+
   function toggleMember(id: string) {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -83,6 +97,35 @@ export default function ChatsList() {
     <div className="min-h-screen" style={{ background: "#10131a", color: "#e1e2eb" }}>
       <div className="fixed top-0 right-0 w-[60%] h-[40%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(100px)" }} />
+
+      {/* Delete Confirm Modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6"
+          style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}>
+          <div className="w-full max-w-sm rounded-[2rem] p-6 flex flex-col gap-4"
+            style={{ background: "#1d2026" }}>
+            <h3 className="font-bold text-[17px] text-center">Удалить чат?</h3>
+            <p className="text-[14px] text-[#bacac6]/70 text-center">
+              «{confirmDelete.name}» и все сообщения в нём будут удалены.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="flex-1 py-3.5 rounded-2xl font-bold text-[15px] text-[#e1e2eb]"
+                style={{ background: "#272a31" }}>
+                Отмена
+              </button>
+              <button
+                onClick={() => deleteGroup(confirmDelete.id)}
+                disabled={deletingId === confirmDelete.id}
+                className="flex-1 py-3.5 rounded-2xl font-bold text-[15px] text-white disabled:opacity-50"
+                style={{ background: "rgba(255,80,80,0.85)" }}>
+                {deletingId === confirmDelete.id ? "..." : "Удалить"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Group Modal */}
       {showCreateGroup && (
@@ -188,35 +231,6 @@ export default function ChatsList() {
           />
         </div>
 
-        {/* Main Group Chat */}
-        {!search && chatsData.group && (
-          <button
-            onClick={() => navigate(`/chat/${GROUP_CHAT_ID}`)}
-            className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] mb-3 text-left transition-all active:scale-[0.98]"
-            style={{ background: "#1d2026", boxShadow: "0 2px 16px rgba(0,0,0,0.3)" }}>
-            <div className="w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
-              <span className="material-symbols-outlined text-[#003732] text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>sync</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <h4 className="font-bold text-[16px] text-[#e1e2eb]">Общий чат</h4>
-                <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-widest uppercase flex items-center gap-1"
-                  style={{ background: "rgba(70,238,221,0.12)", color: "#46eedd" }}>
-                  <span className="w-1.5 h-1.5 bg-[#46eedd] rounded-full animate-pulse inline-block" />
-                  В ЭФИРЕ
-                </span>
-              </div>
-              <p className="text-[13px] text-[#bacac6]/70 truncate">
-                {chatsData.group.last_msg || "Начните общение"}
-              </p>
-            </div>
-            {chatsData.group.last_time && (
-              <span className="text-[11px] text-[#bacac6]/50 shrink-0">{formatTime(chatsData.group.last_time)}</span>
-            )}
-          </button>
-        )}
-
         {/* Custom Group Chats */}
         {!search && chatsData.custom_groups.length > 0 && (
           <>
@@ -225,21 +239,31 @@ export default function ChatsList() {
             </h2>
             <div className="flex flex-col gap-1 mb-4">
               {chatsData.custom_groups.map(g => (
-                <button key={g.id}
-                  onClick={() => navigate(`/group-chat/${g.id}`)}
-                  className="flex items-center gap-4 p-3 -mx-2 w-full text-left rounded-3xl hover:bg-[#1d2026] transition-all active:bg-[#272a31]/50">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
-                    style={{ background: "rgba(70,238,221,0.1)" }}>
-                    <span className="material-symbols-outlined text-[#46eedd] text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-center mb-0.5">
-                      <h4 className="font-bold text-[#e1e2eb] truncate text-[15px]">{g.name}</h4>
-                      <span className="text-[11px] text-[#bacac6]/50 ml-2 shrink-0">{formatTime(g.last_time)}</span>
+                <div key={g.id} className="relative group/item">
+                  <button
+                    onClick={() => navigate(`/group-chat/${g.id}`)}
+                    className="flex items-center gap-4 p-3 -mx-2 w-full text-left rounded-3xl hover:bg-[#1d2026] transition-all active:bg-[#272a31]/50">
+                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
+                      style={{ background: "rgba(70,238,221,0.1)" }}>
+                      <span className="material-symbols-outlined text-[#46eedd] text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
                     </div>
-                    <p className="text-[13px] text-[#bacac6]/70 truncate">{g.last_msg || "Нет сообщений"}</p>
-                  </div>
-                </button>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center mb-0.5">
+                        <h4 className="font-bold text-[#e1e2eb] truncate text-[15px]">{g.name}</h4>
+                        <span className="text-[11px] text-[#bacac6]/50 ml-2 shrink-0">{formatTime(g.last_time)}</span>
+                      </div>
+                      <p className="text-[13px] text-[#bacac6]/70 truncate">{g.last_msg || "Нет сообщений"}</p>
+                    </div>
+                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setConfirmDelete({ id: g.id, name: g.name })}
+                      className="absolute right-0 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-xl text-[#bacac6]/30 hover:text-red-400 hover:bg-[#272a31] transition-all opacity-0 group-hover/item:opacity-100"
+                      title="Удалить чат">
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           </>

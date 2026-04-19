@@ -2,15 +2,13 @@ import { Router } from "express";
 import {
   db, messagesTable, usersTable, chatsTable, chatMembersTable, pushSubscriptionsTable
 } from "@workspace/db";
-import { eq, desc, asc, and, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, inArray, sql } from "drizzle-orm";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import crypto from "crypto";
 import webpush from "web-push";
 
 const router = Router();
 router.use(requireAuth);
-
-const GROUP_CHAT_ID = "00000000-0000-0000-0000-000000000001";
 
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT || "mailto:admin@makswim.app",
@@ -24,9 +22,7 @@ function personalChatId(a: string, b: string): string {
   return [hash.slice(0, 8), hash.slice(8, 12), hash.slice(12, 16), hash.slice(16, 20), hash.slice(20, 32)].join("-");
 }
 
-async function resolveActualChatId(chatId: string, userId: string): Promise<{ actualId: string; type: "main_group" | "custom_group" | "personal"; partnerUserId?: string }> {
-  if (chatId === GROUP_CHAT_ID) return { actualId: chatId, type: "main_group" };
-
+async function resolveActualChatId(chatId: string, userId: string): Promise<{ actualId: string; type: "custom_group" | "personal"; partnerUserId?: string }> {
   const customGroup = await db
     .select({ id: chatsTable.id })
     .from(chatsTable)
@@ -57,89 +53,100 @@ async function sendPushToUsers(userIds: string[], payload: object) {
   );
 }
 
+function msgPreview(content: string | null, contentType: string | null): string | null {
+  if (!content) return null;
+  if (contentType === "image") return "📷 Фото";
+  if (contentType === "voice") return "🎤 Голосовое";
+  return content;
+}
+
 // GET /api/chats
 router.get("/chats", async (req: AuthRequest, res) => {
   const userId = req.user!.id;
 
-  const [groupLastMsg] = await db
-    .select({ content: messagesTable.content, content_type: messagesTable.content_type, created_at: messagesTable.created_at })
-    .from(messagesTable)
-    .where(eq(messagesTable.chat_id, GROUP_CHAT_ID))
-    .orderBy(desc(messagesTable.created_at))
-    .limit(1);
-
+  // Fetch all users in one query
   const allUsers = await db
     .select({ id: usersTable.id, name: usersTable.name, avatar_url: usersTable.avatar_url })
     .from(usersTable)
-    .orderBy(usersTable.created_at);
+    .orderBy(usersTable.name);
 
   const otherUsers = allUsers.filter(u => u.id !== userId);
 
-  const personalChats = await Promise.all(
-    otherUsers.map(async (u) => {
-      const chatId = personalChatId(userId, u.id);
-      const [lastMsg] = await db
-        .select({ content: messagesTable.content, content_type: messagesTable.content_type, created_at: messagesTable.created_at })
-        .from(messagesTable)
-        .where(eq(messagesTable.chat_id, chatId))
-        .orderBy(desc(messagesTable.created_at))
-        .limit(1);
+  // Compute all personal chat IDs
+  const personalChatIds = otherUsers.map(u => personalChatId(userId, u.id));
 
-      const preview = lastMsg
-        ? lastMsg.content_type === "image" ? "📷 Фото"
-          : lastMsg.content_type === "voice" ? "🎤 Голосовое"
-          : lastMsg.content
-        : null;
-
-      return {
-        id:         u.id,
-        name:       u.name,
-        avatar_url: u.avatar_url,
-        last_msg:   preview,
-        last_time:  lastMsg?.created_at || null,
-      };
-    })
-  );
-
-  // Custom group chats where user is a member
+  // Get custom group chats for the user
   const userGroups = await db
     .select({ id: chatsTable.id, name: chatsTable.name })
     .from(chatsTable)
     .innerJoin(chatMembersTable, eq(chatMembersTable.chat_id, chatsTable.id))
     .where(and(eq(chatMembersTable.user_id, userId), eq(chatsTable.type, "group")));
 
-  const customGroupsWithMsgs = await Promise.all(
-    userGroups.map(async (g) => {
-      const [lastMsg] = await db
-        .select({ content: messagesTable.content, content_type: messagesTable.content_type, created_at: messagesTable.created_at })
-        .from(messagesTable)
-        .where(eq(messagesTable.chat_id, g.id))
-        .orderBy(desc(messagesTable.created_at))
-        .limit(1);
+  const groupChatIds = userGroups.map(g => g.id);
 
-      const preview = lastMsg
-        ? lastMsg.content_type === "image" ? "📷 Фото"
-          : lastMsg.content_type === "voice" ? "🎤 Голосовое"
-          : lastMsg.content
-        : null;
+  // Batch fetch last messages for ALL chats at once using a CTE / subquery
+  const allChatIds = [...personalChatIds, ...groupChatIds];
 
-      return { id: g.id, name: g.name || "Группа", last_msg: preview, last_time: lastMsg?.created_at || null };
+  let lastMsgMap: Record<string, { content: string; content_type: string; created_at: string }> = {};
+
+  if (allChatIds.length > 0) {
+    // Get the most recent message per chat_id in one query
+    const rows = await db.execute(sql`
+      SELECT DISTINCT ON (chat_id)
+        chat_id,
+        content,
+        content_type,
+        created_at
+      FROM ${messagesTable}
+      WHERE chat_id = ANY(${allChatIds})
+      ORDER BY chat_id, created_at DESC
+    `);
+
+    for (const row of rows.rows as any[]) {
+      lastMsgMap[row.chat_id] = {
+        content: row.content,
+        content_type: row.content_type,
+        created_at: row.created_at,
+      };
+    }
+  }
+
+  // Build personal chats list, sorted by last message time
+  const personalChats = otherUsers
+    .map(u => {
+      const chatId = personalChatId(userId, u.id);
+      const lm = lastMsgMap[chatId] || null;
+      return {
+        id:         u.id,
+        name:       u.name,
+        avatar_url: u.avatar_url,
+        last_msg:   lm ? msgPreview(lm.content, lm.content_type) : null,
+        last_time:  lm?.created_at || null,
+      };
     })
-  );
+    .sort((a, b) => {
+      if (!a.last_time && !b.last_time) return 0;
+      if (!a.last_time) return 1;
+      if (!b.last_time) return -1;
+      return new Date(b.last_time).getTime() - new Date(a.last_time).getTime();
+    });
 
-  const groupPreview = groupLastMsg
-    ? groupLastMsg.content_type === "image" ? "📷 Фото"
-      : groupLastMsg.content_type === "voice" ? "🎤 Голосовое"
-      : groupLastMsg.content
-    : null;
+  const customGroupsWithMsgs = userGroups.map(g => {
+    const lm = lastMsgMap[g.id] || null;
+    return {
+      id: g.id,
+      name: g.name || "Группа",
+      last_msg: lm ? msgPreview(lm.content, lm.content_type) : null,
+      last_time: lm?.created_at || null,
+    };
+  }).sort((a, b) => {
+    if (!a.last_time && !b.last_time) return 0;
+    if (!a.last_time) return 1;
+    if (!b.last_time) return -1;
+    return new Date(b.last_time).getTime() - new Date(a.last_time).getTime();
+  });
 
   res.json({
-    group: {
-      id:        GROUP_CHAT_ID,
-      name:      "Общий чат",
-      last_msg:  groupPreview,
-      last_time: groupLastMsg?.created_at || null,
-    },
     custom_groups: customGroupsWithMsgs,
     personal: personalChats,
   });
@@ -164,6 +171,25 @@ router.post("/group-chats", requireAdmin, async (req: AuthRequest, res) => {
   );
 
   res.json({ id: chat.id, name: chat.name, type: "group" });
+});
+
+// DELETE /api/group-chats/:id (admin only)
+router.delete("/group-chats/:id", requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+
+  const [chat] = await db
+    .select()
+    .from(chatsTable)
+    .where(and(eq(chatsTable.id, id), eq(chatsTable.type, "group")))
+    .limit(1);
+
+  if (!chat) { res.status(404).json({ error: "Group not found" }); return; }
+
+  await db.delete(messagesTable).where(eq(messagesTable.chat_id, id));
+  await db.delete(chatMembersTable).where(eq(chatMembersTable.chat_id, id));
+  await db.delete(chatsTable).where(eq(chatsTable.id, id));
+
+  res.json({ ok: true });
 });
 
 // GET /api/chats/:chatId/messages
@@ -234,16 +260,11 @@ router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
   const payload = {
     title: req.user!.name,
     body: notifContent,
-    icon: "/favicon.svg",
     data: { chatId: chatId },
   };
 
   if (type === "personal" && partnerUserId) {
     sendPushToUsers([partnerUserId], payload).catch(() => {});
-  } else if (type === "main_group") {
-    const allUsers = await db.select({ id: usersTable.id }).from(usersTable);
-    const others = allUsers.map(u => u.id).filter(id => id !== userId);
-    sendPushToUsers(others, payload).catch(() => {});
   } else if (type === "custom_group") {
     const members = await db
       .select({ user_id: chatMembersTable.user_id })

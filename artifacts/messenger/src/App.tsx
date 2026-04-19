@@ -18,7 +18,11 @@ const queryClient = new QueryClient();
 async function registerPush() {
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
   try {
-    const reg = await navigator.serviceWorker.register("/sw.js");
+    const base = import.meta.env.BASE_URL || "/";
+    const swUrl = base.endsWith("/") ? base + "sw.js" : base + "/sw.js";
+    const reg = await navigator.serviceWorker.register(swUrl, { scope: base });
+    await navigator.serviceWorker.ready;
+
     const permission = await Notification.requestPermission();
     if (permission !== "granted") return;
 
@@ -27,8 +31,7 @@ async function registerPush() {
 
     const existing = await reg.pushManager.getSubscription();
     if (existing) {
-      await api.push.subscribe(existing.toJSON() as PushSubscriptionJSON);
-      return;
+      try { await existing.unsubscribe(); } catch {}
     }
 
     const sub = await reg.pushManager.subscribe({
@@ -53,7 +56,7 @@ function AuthGuard({ children, adminOnly = false }: { children: React.ReactNode;
 
   useEffect(() => {
     if (user) registerPush().catch(() => {});
-  }, [user]);
+  }, [user?.id]);
 
   if (loading) {
     return (
