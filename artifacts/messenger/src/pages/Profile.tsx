@@ -55,8 +55,14 @@ export default function Profile() {
       await refresh();
       setEditing(false);
       showToast("Профиль сохранён");
-    } catch { showToast("Ошибка сохранения"); }
-    finally { setSaving(false); }
+    } catch (err: any) {
+      const msg: string = err?.message || "";
+      if (msg.includes("413") || msg.toLowerCase().includes("too large") || msg.toLowerCase().includes("payload")) {
+        showToast("Фото слишком большое — выберите другое");
+      } else {
+        showToast("Ошибка сохранения");
+      }
+    } finally { setSaving(false); }
   }
 
   function showToast(msg: string) {

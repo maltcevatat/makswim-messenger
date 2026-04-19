@@ -49,7 +49,12 @@ export default function ProfileSetup() {
       await refresh();
       navigate("/");
     } catch (err: any) {
-      setError(err.message || "Ошибка при создании профиля");
+      const msg: string = err.message || "";
+      if (msg.includes("413") || msg.toLowerCase().includes("too large") || msg.toLowerCase().includes("payload")) {
+        setError("Фото слишком большое. Выберите другое или попробуйте уменьшить размер.");
+      } else {
+        setError(msg || "Ошибка при создании профиля");
+      }
     } finally {
       setLoading(false);
     }
