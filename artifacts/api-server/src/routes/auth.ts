@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, inviteCodesTable, usersTable, sessionsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import crypto from "crypto";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 
@@ -12,8 +12,15 @@ function generateSessionToken(): string {
   return crypto.randomBytes(48).toString("hex");
 }
 
+async function createSession(userId: string) {
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000);
+  await db.insert(sessionsTable).values({ user_id: userId, token, expires_at: expiresAt });
+  return { token, expiresAt };
+}
+
 // POST /api/auth/validate-code
-// Just checks the code is valid + unused (doesn't consume it)
+// Checks the code — returns is_new:true for fresh codes, is_new:false for returning users
 router.post("/auth/validate-code", async (req, res) => {
   const { code } = req.body;
   if (!code || typeof code !== "string") {
@@ -27,37 +34,78 @@ router.post("/auth/validate-code", async (req, res) => {
     .where(eq(inviteCodesTable.code, upper))
     .limit(1);
 
-  if (rows.length === 0 || rows[0].is_used) {
-    res.status(400).json({ error: "Неверный или уже использованный код" });
+  if (rows.length === 0) {
+    res.status(400).json({ error: "Неверный код приглашения" });
     return;
   }
-  res.json({ valid: true, grants_admin: rows[0].grants_admin });
+
+  const invite = rows[0];
+
+  if (!invite.is_used) {
+    // Fresh code — new user registration
+    res.json({ valid: true, grants_admin: invite.grants_admin, is_new: true });
+  } else {
+    // Code already used — this is a returning user login
+    res.json({ valid: true, grants_admin: invite.grants_admin, is_new: false });
+  }
 });
 
 // POST /api/auth/setup-profile
-// Consumes the code, creates user + session
+// NEW USER: Consumes the code, creates user + session
+// RETURNING USER: code already used → log in as existing user
 router.post("/auth/setup-profile", async (req, res) => {
   const { code, name, avatar_url } = req.body;
-  if (!code || !name) {
-    res.status(400).json({ error: "code and name are required" });
+  if (!code) {
+    res.status(400).json({ error: "code is required" });
     return;
   }
   const upper = code.trim().toUpperCase();
 
-  // Re-validate code (prevent race conditions)
   const codeRows = await db
     .select()
     .from(inviteCodesTable)
-    .where(and(eq(inviteCodesTable.code, upper), eq(inviteCodesTable.is_used, false)))
+    .where(eq(inviteCodesTable.code, upper))
     .limit(1);
 
   if (codeRows.length === 0) {
-    res.status(400).json({ error: "Код уже использован или недействителен" });
+    res.status(400).json({ error: "Недействительный код" });
     return;
   }
   const inviteCode = codeRows[0];
 
-  // Create user
+  // RETURNING USER: code is used — log in as the owner of this code
+  if (inviteCode.is_used && inviteCode.used_by) {
+    const userRows = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, inviteCode.used_by))
+      .limit(1);
+
+    if (userRows.length === 0) {
+      res.status(400).json({ error: "Пользователь не найден" });
+      return;
+    }
+    const user = userRows[0];
+    const { token, expiresAt } = await createSession(user.id);
+
+    res.cookie("makswim_session", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: expiresAt,
+      path: "/",
+    });
+
+    res.json({ id: user.id, name: user.name, avatar_url: user.avatar_url, role: user.role });
+    return;
+  }
+
+  // NEW USER: code is fresh — need name
+  if (!name) {
+    res.status(400).json({ error: "name is required for new registration" });
+    return;
+  }
+
   const [user] = await db
     .insert(usersTable)
     .values({
@@ -68,22 +116,13 @@ router.post("/auth/setup-profile", async (req, res) => {
     })
     .returning();
 
-  // Mark code as used
   await db
     .update(inviteCodesTable)
     .set({ is_used: true, used_by: user.id, used_at: new Date() })
     .where(eq(inviteCodesTable.id, inviteCode.id));
 
-  // Create session
-  const token = generateSessionToken();
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 86400 * 1000);
-  await db.insert(sessionsTable).values({
-    user_id: user.id,
-    token,
-    expires_at: expiresAt,
-  });
+  const { token, expiresAt } = await createSession(user.id);
 
-  // Set cookie
   res.cookie("makswim_session", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
@@ -92,12 +131,7 @@ router.post("/auth/setup-profile", async (req, res) => {
     path: "/",
   });
 
-  res.json({
-    id:         user.id,
-    name:       user.name,
-    avatar_url: user.avatar_url,
-    role:       user.role,
-  });
+  res.json({ id: user.id, name: user.name, avatar_url: user.avatar_url, role: user.role });
 });
 
 // GET /api/auth/me
@@ -105,7 +139,7 @@ router.get("/auth/me", requireAuth, (req: AuthRequest, res) => {
   res.json(req.user);
 });
 
-// PUT /api/auth/profile  — update own profile
+// PUT /api/auth/profile
 router.put("/auth/profile", requireAuth, async (req: AuthRequest, res) => {
   const { name, avatar_url } = req.body;
   if (!name) {

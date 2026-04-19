@@ -17,7 +17,7 @@ function generateCode(): string {
 }
 
 // GET /api/admin/codes
-router.get("/admin/codes", async (_req, res) => {
+router.get("/codes", async (_req, res) => {
   const codes = await db
     .select({
       id:           inviteCodesTable.id,
@@ -33,9 +33,8 @@ router.get("/admin/codes", async (_req, res) => {
 });
 
 // POST /api/admin/codes
-router.post("/admin/codes", async (req: AuthRequest, res) => {
+router.post("/codes", async (req: AuthRequest, res) => {
   let code: string;
-  // ensure uniqueness
   while (true) {
     code = generateCode();
     const existing = await db
@@ -52,7 +51,7 @@ router.post("/admin/codes", async (req: AuthRequest, res) => {
 });
 
 // GET /api/admin/stats
-router.get("/admin/stats", async (_req, res) => {
+router.get("/stats", async (_req, res) => {
   const [userCount] = await db.select({ count: count() }).from(usersTable);
   const [codeCount] = await db.select({ count: count() }).from(inviteCodesTable);
   const [usedCount] = await db
@@ -64,12 +63,12 @@ router.get("/admin/stats", async (_req, res) => {
     total_users:   userCount.count,
     total_codes:   codeCount.count,
     used_codes:    usedCount.count,
-    online_users:  42, // would require WebSocket tracking in real app
+    online_users:  42,
   });
 });
 
 // GET /api/admin/members
-router.get("/admin/members", async (_req, res) => {
+router.get("/members", async (_req, res) => {
   const members = await db
     .select({
       id:         usersTable.id,
@@ -84,21 +83,19 @@ router.get("/admin/members", async (_req, res) => {
 });
 
 // DELETE /api/admin/members/:id
-router.delete("/admin/members/:id", async (req: AuthRequest, res) => {
+router.delete("/members/:id", async (req: AuthRequest, res) => {
   const { id } = req.params;
   if (id === req.user!.id) {
     res.status(400).json({ error: "Cannot remove yourself" });
     return;
   }
-  // Delete sessions first
   await db.delete(sessionsTable).where(eq(sessionsTable.user_id, id));
-  // Delete user
   await db.delete(usersTable).where(eq(usersTable.id, id));
   res.json({ ok: true });
 });
 
 // PUT /api/admin/members/:id/role
-router.put("/admin/members/:id/role", async (req, res) => {
+router.put("/members/:id/role", async (req, res) => {
   const { id } = req.params;
   const { role } = req.body;
   if (role !== "admin" && role !== "user") {

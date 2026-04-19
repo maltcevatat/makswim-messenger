@@ -5,6 +5,15 @@ import { useAuth } from "@/context/AuthContext";
 
 const GROUP_CHAT_ID = "00000000-0000-0000-0000-000000000001";
 
+const EMOJIS = [
+  "😀","😂","😍","🥰","😎","😢","😡","🤔","😴","🤯",
+  "👍","👎","👋","🙏","💪","🤝","🫂","✌️","🤞","👏",
+  "❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💯",
+  "🔥","⭐","✨","💥","🌊","🎯","🏆","🥇","🎉","🎊",
+  "🏊","🚴","🏃","🧘","🤽","🚣","⚽","🏋️","🎽","🥤",
+  "✅","❌","⚠️","💬","📢","🔑","🗝️","📅","⏰","📍",
+];
+
 interface Message {
   id: string;
   content: string;
@@ -17,12 +26,27 @@ interface Message {
   outgoing: boolean;
 }
 
-interface ChatViewProps {
-  id: string;
-}
+interface ChatViewProps { id: string; }
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
+}
+
+async function compressImage(file: File, maxDim = 1024): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.8));
+    };
+    img.src = url;
+  });
 }
 
 export default function ChatView({ id }: ChatViewProps) {
@@ -37,7 +61,22 @@ export default function ChatView({ id }: ChatViewProps) {
   const [chatName, setChatName] = useState(isGroup ? "Общий чат" : "");
   const [chatAvatar, setChatAvatar] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [toast, setToast] = useState("");
+  const [showCallOverlay, setShowCallOverlay] = useState<"audio" | "video" | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(""), 2500);
+  };
 
   const loadMessages = useCallback(async () => {
     try {
@@ -54,7 +93,6 @@ export default function ChatView({ id }: ChatViewProps) {
   useEffect(() => {
     setLoading(true);
     loadMessages();
-    // Poll every 3s
     const interval = setInterval(loadMessages, 3000);
     return () => clearInterval(interval);
   }, [loadMessages]);
@@ -63,7 +101,6 @@ export default function ChatView({ id }: ChatViewProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Resolve chat name for personal chats from members
   useEffect(() => {
     if (!isGroup && !chatName && !loading) {
       api.members.list().then(members => {
@@ -73,23 +110,69 @@ export default function ChatView({ id }: ChatViewProps) {
     }
   }, [id, isGroup, chatName, loading]);
 
-  async function sendMessage() {
-    if (!inputText.trim() || sending) return;
-    const text = inputText.trim();
-    setInputText("");
+  async function sendMessage(content = inputText.trim(), type = "text") {
+    if (!content || sending) return;
+    if (type === "text") setInputText("");
     setSending(true);
     try {
-      const msg = await api.chats.sendMessage(id, text) as Message;
+      const msg = await api.chats.sendMessage(id, content, type) as Message;
       setMessages(prev => [...prev, msg]);
-    } catch {}
+    } catch { showToast("Ошибка отправки"); }
     finally { setSending(false); }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  }
+
+  function insertEmoji(emoji: string) {
+    setInputText(prev => prev + emoji);
+    setShowEmojiPicker(false);
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    try {
+      setSending(true);
+      const compressed = await compressImage(file);
+      await sendMessage(compressed, "image");
+    } catch { showToast("Ошибка загрузки фото"); setSending(false); }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = e => audioChunksRef.current.push(e.data);
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+    } catch { showToast("Нет доступа к микрофону"); }
+  }
+
+  async function stopRecording() {
+    if (!mediaRecorderRef.current) return;
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    setIsRecording(false);
+    setRecordingTime(0);
+    return new Promise<void>(resolve => {
+      mediaRecorderRef.current!.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        mediaRecorderRef.current?.stream.getTracks().forEach(t => t.stop());
+        const reader = new FileReader();
+        reader.onload = async () => {
+          await sendMessage(reader.result as string, "voice");
+          resolve();
+        };
+        reader.readAsDataURL(blob);
+      };
+      mediaRecorderRef.current!.stop();
+    });
   }
 
   function showContextMenu(e: React.MouseEvent, msgId: string) {
@@ -109,11 +192,47 @@ export default function ChatView({ id }: ChatViewProps) {
     setContextMenu(null);
   }
 
+  function formatRecordingTime(s: number) {
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ background: "#10131a", color: "#e1e2eb" }}
-      onClick={() => setContextMenu(null)}>
+      onClick={() => { setContextMenu(null); setShowEmojiPicker(false); }}>
       <div className="fixed top-[-10%] right-[-10%] w-[50%] h-[50%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(120px)" }} />
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl"
+          style={{ background: "#46eedd" }}>{toast}</div>
+      )}
+
+      {/* Call overlay */}
+      {showCallOverlay && (
+        <div className="fixed inset-0 z-[300] flex flex-col items-center justify-center gap-8"
+          style={{ background: "rgba(16,19,26,0.97)", backdropFilter: "blur(24px)" }}>
+          <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-[#46eedd]/30">
+            {chatAvatar
+              ? <img src={chatAvatar} alt="" className="w-full h-full object-cover" />
+              : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
+                  <span className="text-[40px] font-black text-[#bacac6]/30">{chatName.charAt(0)}</span>
+                </div>}
+          </div>
+          <div className="text-center">
+            <h2 className="text-[22px] font-bold text-[#e1e2eb]">{chatName}</h2>
+            <p className="text-[#46eedd] text-[14px] mt-1 animate-pulse">
+              {showCallOverlay === "video" ? "Видеозвонок..." : "Голосовой звонок..."}
+            </p>
+          </div>
+          <div className="flex items-center gap-6">
+            <button onClick={() => { setShowCallOverlay(null); showToast("Звонок завершён"); }}
+              className="w-16 h-16 rounded-full bg-[#ff4444] flex items-center justify-center active:scale-90 transition-all">
+              <span className="material-symbols-outlined text-white text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>call_end</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Context Menu */}
       {contextMenu && (
@@ -149,9 +268,7 @@ export default function ChatView({ id }: ChatViewProps) {
                   <img alt={chatName} className="w-10 h-10 rounded-full object-cover border border-white/10" src={chatAvatar} />
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-[#272a31] flex items-center justify-center">
-                    <span className="text-[16px] font-black text-[#bacac6]/50">
-                      {chatName.charAt(0).toUpperCase()}
-                    </span>
+                    <span className="text-[16px] font-black text-[#bacac6]/50">{chatName.charAt(0).toUpperCase()}</span>
                   </div>
                 )}
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#46eedd] rounded-full border-2 border-[#10131a]" />
@@ -165,16 +282,24 @@ export default function ChatView({ id }: ChatViewProps) {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button onClick={() => navigate("/calls")}
-              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
-              <span className="material-symbols-outlined">call</span>
-            </button>
+            {!isGroup && (
+              <>
+                <button onClick={() => setShowCallOverlay("audio")}
+                  className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
+                  <span className="material-symbols-outlined text-[22px]">call</span>
+                </button>
+                <button onClick={() => setShowCallOverlay("video")}
+                  className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
+                  <span className="material-symbols-outlined text-[22px]">videocam</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
 
       {/* Messages */}
-      <main className="flex-1 px-4 max-w-lg mx-auto w-full overflow-y-auto chat-scroll flex flex-col gap-4 pt-4 mt-20 mb-24">
+      <main className="flex-1 px-4 max-w-lg mx-auto w-full overflow-y-auto chat-scroll flex flex-col gap-4 pt-4 mt-20 mb-28">
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="w-8 h-8 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
@@ -199,7 +324,23 @@ export default function ChatView({ id }: ChatViewProps) {
                 {isGroup && !msg.outgoing && (
                   <span className="text-[11px] text-[#46eedd] font-semibold ml-1 mb-1">{msg.sender_name}</span>
                 )}
-                {msg.outgoing ? (
+
+                {msg.content_type === "image" && !msg.is_deleted ? (
+                  <div className={`rounded-2xl overflow-hidden cursor-pointer shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none"}`}
+                    style={{ maxWidth: 240 }}
+                    onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
+                    <img src={msg.content} alt="фото" className="w-full h-auto block" style={{ maxWidth: 240 }} />
+                  </div>
+                ) : msg.content_type === "voice" && !msg.is_deleted ? (
+                  <div className={`p-3 rounded-2xl shadow-lg ${msg.outgoing ? "rounded-br-none" : "rounded-bl-none bg-[#272a31]"}`}
+                    style={msg.outgoing ? { background: "linear-gradient(135deg, #46eedd, #00d1c1)" } : {}}
+                    onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-[20px]" style={{ color: msg.outgoing ? "#003732" : "#46eedd", fontVariationSettings: "'FILL' 1" }}>mic</span>
+                      <audio controls src={msg.content} className="h-8" style={{ maxWidth: 180 }} />
+                    </div>
+                  </div>
+                ) : msg.outgoing ? (
                   <div className={`message-bubble p-3.5 rounded-2xl rounded-br-none shadow-lg cursor-pointer ${msg.is_deleted ? "opacity-50" : ""}`}
                     style={{ background: msg.is_deleted ? "#272a31" : "linear-gradient(135deg, #46eedd, #00d1c1)" }}
                     onClick={e => !msg.is_deleted && showContextMenu(e, msg.id)}>
@@ -215,6 +356,7 @@ export default function ChatView({ id }: ChatViewProps) {
                     </p>
                   </div>
                 )}
+
                 <div className={`flex items-center gap-1.5 mt-1.5 px-1 ${msg.outgoing ? "flex-row-reverse" : ""}`}>
                   <span className="text-[10px] text-[#bacac6]/50 font-medium">{formatTime(msg.created_at)}</span>
                 </div>
@@ -225,28 +367,92 @@ export default function ChatView({ id }: ChatViewProps) {
         <div ref={bottomRef} />
       </main>
 
+      {/* Emoji picker */}
+      {showEmojiPicker && (
+        <div className="fixed bottom-28 left-4 right-4 z-50 max-w-lg mx-auto rounded-3xl p-4 grid grid-cols-10 gap-2"
+          style={{ background: "#1d2026", boxShadow: "0 -4px 32px rgba(0,0,0,0.5)" }}
+          onClick={e => e.stopPropagation()}>
+          {EMOJIS.map(emoji => (
+            <button key={emoji} onClick={() => insertEmoji(emoji)}
+              className="text-[22px] flex items-center justify-center aspect-square rounded-xl hover:bg-[#272a31] active:scale-90 transition-all">
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Input Bar */}
-      <div className="fixed bottom-0 left-0 right-0 border-t border-white/5 px-4 pt-3 pb-8 z-50"
+      <div className="fixed bottom-0 left-0 right-0 border-t border-white/5 px-4 pt-3 pb-8 z-40"
         style={{ background: "rgba(16,19,26,0.95)", backdropFilter: "blur(24px)" }}>
-        <div className="max-w-lg mx-auto flex items-center gap-2.5">
-          <div className="flex-1 relative flex items-center">
-            <input
-              className="w-full bg-[#1d2026] text-[#e1e2eb] rounded-2xl px-5 py-3.5 text-[15px] outline-none"
-              placeholder="Сообщение..."
-              value={inputText}
-              onChange={e => setInputText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              style={{ caretColor: "#46eedd" }}
-            />
+        <div className="max-w-lg mx-auto">
+
+          {/* Recording indicator */}
+          {isRecording && (
+            <div className="flex items-center justify-between px-2 py-2 mb-2 rounded-2xl"
+              style={{ background: "rgba(255,68,68,0.1)" }}>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-red-400 text-[13px] font-bold">Запись {formatRecordingTime(recordingTime)}</span>
+              </div>
+              <button onClick={stopRecording}
+                className="text-red-400 text-[12px] font-bold px-3 py-1 rounded-full border border-red-400/30">
+                Отправить
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            {/* Emoji button */}
+            <button onClick={e => { e.stopPropagation(); setShowEmojiPicker(v => !v); }}
+              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] hover:text-[#46eedd] active:bg-[#1d2026] transition-colors shrink-0">
+              <span className="material-symbols-outlined text-[22px]">emoji_emotions</span>
+            </button>
+
+            {/* Image upload */}
+            <button onClick={() => fileInputRef.current?.click()}
+              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] hover:text-[#46eedd] active:bg-[#1d2026] transition-colors shrink-0">
+              <span className="material-symbols-outlined text-[22px]">image</span>
+            </button>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+
+            {/* Text input */}
+            <div className="flex-1 relative">
+              <input
+                className="w-full bg-[#1d2026] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[15px] outline-none"
+                placeholder="Сообщение..."
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                style={{ caretColor: "#46eedd" }}
+              />
+            </div>
+
+            {/* Voice / Send */}
+            {inputText.trim() ? (
+              <button onClick={() => sendMessage()} disabled={sending}
+                className="w-12 h-12 flex items-center justify-center bg-[#46eedd] text-[#003732] rounded-2xl active:scale-90 transition-all disabled:opacity-40 shrink-0"
+                style={{ boxShadow: "0 4px 16px rgba(70,238,221,0.25)" }}>
+                {sending
+                  ? <div className="w-5 h-5 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" />
+                  : <span className="material-symbols-outlined font-bold text-[24px]"
+                      style={{ fontVariationSettings: "'FILL' 1" }}>send</span>}
+              </button>
+            ) : (
+              <button
+                onMouseDown={startRecording}
+                onTouchStart={startRecording}
+                className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all shrink-0 ${
+                  isRecording
+                    ? "bg-red-500 animate-pulse"
+                    : "bg-[#1d2026] text-[#bacac6] hover:text-[#46eedd]"
+                }`}>
+                <span className="material-symbols-outlined text-[24px]"
+                  style={{ fontVariationSettings: isRecording ? "'FILL' 1" : "normal" }}>
+                  {isRecording ? "stop" : "mic"}
+                </span>
+              </button>
+            )}
           </div>
-          <button onClick={sendMessage} disabled={sending || !inputText.trim()}
-            className="w-12 h-12 flex items-center justify-center bg-[#46eedd] text-[#003732] rounded-2xl active:scale-90 transition-all disabled:opacity-40"
-            style={{ boxShadow: "0 4px 16px rgba(70,238,221,0.25)" }}>
-            {sending
-              ? <div className="w-5 h-5 border-2 border-[#003732]/30 border-t-[#003732] rounded-full animate-spin" />
-              : <span className="material-symbols-outlined font-bold text-[24px]"
-                  style={{ fontVariationSettings: "'FILL' 1" }}>send</span>}
-          </button>
         </div>
       </div>
     </div>

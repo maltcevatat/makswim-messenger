@@ -28,9 +28,9 @@ export interface Me {
 
 export const api = {
   auth: {
-    me: ()                 => apiFetch<Me>("/auth/me"),
+    me: () => apiFetch<Me>("/auth/me"),
     validateCode: (code: string) =>
-      apiFetch<{ valid: boolean; grants_admin: boolean }>("/auth/validate-code", {
+      apiFetch<{ valid: boolean; grants_admin: boolean; is_new: boolean }>("/auth/validate-code", {
         method: "POST",
         body: JSON.stringify({ code }),
       }),
@@ -85,5 +85,25 @@ export const api = {
     removeMember: (id: string) => apiFetch(`/admin/members/${id}`, { method: "DELETE" }),
     setRole: (id: string, role: "admin" | "user") =>
       apiFetch(`/admin/members/${id}/role`, { method: "PUT", body: JSON.stringify({ role }) }),
+  },
+
+  training: {
+    list: (month: string) =>
+      apiFetch<{
+        events: {
+          id: string; date: string; title: string; icon: string;
+          time_start: string; time_end: string; color: string; count: number;
+        }[];
+        my_registrations: string[];
+      }>(`/training?month=${month}`),
+    create: (data: { date: string; title: string; icon: string; time_start: string; time_end: string; color: string }) =>
+      apiFetch("/training", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: { date: string; title: string; icon: string; time_start: string; time_end: string; color: string }) =>
+      apiFetch(`/training/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch(`/training/${id}`, { method: "DELETE" }),
+    register: (id: string) =>
+      apiFetch<{ registered: boolean }>(`/training/${id}/register`, { method: "POST" }),
+    registrations: (id: string) =>
+      apiFetch<{ user_id: string; name: string; avatar_url: string }[]>(`/training/${id}/registrations`),
   },
 };

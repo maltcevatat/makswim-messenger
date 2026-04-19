@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { api } from "@/api";
+import { useAuth } from "@/context/AuthContext";
 
 export default function Login() {
   const [, navigate] = useLocation();
+  const { refresh } = useAuth();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -11,18 +13,23 @@ export default function Login() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = code.trim().toUpperCase();
-    if (!trimmed) {
-      setError("Введите код приглашения");
-      return;
-    }
+    if (!trimmed) { setError("Введите код приглашения"); return; }
     setError("");
     setLoading(true);
     try {
-      await api.auth.validateCode(trimmed);
-      sessionStorage.setItem("makswim_pending_code", trimmed);
-      navigate("/setup");
+      const result = await api.auth.validateCode(trimmed);
+      if (!result.is_new) {
+        // Returning user — log in directly (code acts as password)
+        await api.auth.setupProfile({ code: trimmed, name: "", avatar_url: "" });
+        await refresh();
+        navigate("/");
+      } else {
+        // New user — go to profile setup
+        sessionStorage.setItem("makswim_pending_code", trimmed);
+        navigate("/setup");
+      }
     } catch (err: any) {
-      setError(err.message || "Неверный или уже использованный код");
+      setError(err.message || "Неверный код приглашения");
     } finally {
       setLoading(false);
     }

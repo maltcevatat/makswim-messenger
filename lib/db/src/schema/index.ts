@@ -58,7 +58,7 @@ export const chatMembersTable = pgTable("chat_members", {
 // ── messages ──────────────────────────────────────────────────────────────
 export const messagesTable = pgTable("messages", {
   id:           uuid("id").primaryKey().defaultRandom(),
-  chat_id:      uuid("chat_id").notNull(),
+  chat_id:      text("chat_id").notNull(),
   sender_id:    uuid("sender_id").notNull(),
   content:      text("content").notNull(),
   content_type: msgTypeEnum("content_type").notNull().default("text"),
@@ -67,15 +67,38 @@ export const messagesTable = pgTable("messages", {
   created_at:   timestamp("created_at").notNull().defaultNow(),
 });
 
+// ── training_events ───────────────────────────────────────────────────────
+export const trainingEventsTable = pgTable("training_events", {
+  id:          uuid("id").primaryKey().defaultRandom(),
+  date:        text("date").notNull(),        // YYYY-MM-DD
+  title:       text("title").notNull(),
+  icon:        text("icon").notNull().default("fitness_center"),
+  time_start:  text("time_start").notNull(),  // HH:MM
+  time_end:    text("time_end").notNull(),    // HH:MM
+  color:       text("color").notNull().default("primary"),
+  created_by:  uuid("created_by").notNull(),
+  created_at:  timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── training_registrations ────────────────────────────────────────────────
+export const trainingRegistrationsTable = pgTable("training_registrations", {
+  id:         uuid("id").primaryKey().defaultRandom(),
+  event_id:   uuid("event_id").notNull(),
+  user_id:    uuid("user_id").notNull(),
+  created_at: timestamp("created_at").notNull().defaultNow(),
+});
+
 // ── insert schemas ────────────────────────────────────────────────────────
 export const insertUserSchema        = createInsertSchema(usersTable).omit({ id: true, created_at: true });
 export const insertInviteCodeSchema  = createInsertSchema(inviteCodesTable).omit({ id: true, created_at: true });
 export const insertMessageSchema     = createInsertSchema(messagesTable).omit({ id: true, created_at: true });
 
 // ── types ─────────────────────────────────────────────────────────────────
-export type User        = typeof usersTable.$inferSelect;
-export type InviteCode  = typeof inviteCodesTable.$inferSelect;
-export type Session     = typeof sessionsTable.$inferSelect;
-export type Chat        = typeof chatsTable.$inferSelect;
-export type Message     = typeof messagesTable.$inferSelect;
-export type ChatMember  = typeof chatMembersTable.$inferSelect;
+export type User                   = typeof usersTable.$inferSelect;
+export type InviteCode             = typeof inviteCodesTable.$inferSelect;
+export type Session                = typeof sessionsTable.$inferSelect;
+export type Chat                   = typeof chatsTable.$inferSelect;
+export type Message                = typeof messagesTable.$inferSelect;
+export type ChatMember             = typeof chatMembersTable.$inferSelect;
+export type TrainingEvent          = typeof trainingEventsTable.$inferSelect;
+export type TrainingRegistration   = typeof trainingRegistrationsTable.$inferSelect;
