@@ -26,7 +26,7 @@ interface Message {
   outgoing: boolean;
 }
 
-interface ChatViewProps { id: string; }
+interface ChatViewProps { id: string; forceGroup?: boolean; }
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" });
@@ -49,29 +49,36 @@ async function compressImage(file: File, maxDim = 1024): Promise<string> {
   });
 }
 
-export default function ChatView({ id }: ChatViewProps) {
+function getSupportedMimeType(): string {
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || "";
+}
+
+export default function ChatView({ id, forceGroup }: ChatViewProps) {
   const [, navigate] = useLocation();
   const { user } = useAuth();
-  const isGroup = id === GROUP_CHAT_ID;
+  const isGroup = forceGroup || id === GROUP_CHAT_ID;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [chatName, setChatName] = useState(isGroup ? "Общий чат" : "");
+  const [chatName, setChatName] = useState(isGroup ? (forceGroup ? "Группа" : "Общий чат") : "");
   const [chatAvatar, setChatAvatar] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msgId: string } | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [toast, setToast] = useState("");
-  const [showCallOverlay, setShowCallOverlay] = useState<"audio" | "video" | null>(null);
+  const [callState, setCallState] = useState<"idle" | "ringing" | "connected">("idle");
+  const [callType, setCallType] = useState<"audio" | "video">("audio");
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -110,6 +117,13 @@ export default function ChatView({ id }: ChatViewProps) {
     }
   }, [id, isGroup, chatName, loading]);
 
+  // Cleanup on unmount
+  useEffect(() => () => {
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
+  }, []);
+
   async function sendMessage(content = inputText.trim(), type = "text") {
     if (!content || sending) return;
     if (type === "text") setInputText("");
@@ -141,38 +155,63 @@ export default function ChatView({ id }: ChatViewProps) {
     } catch { showToast("Ошибка загрузки фото"); setSending(false); }
   }
 
-  async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      recorder.ondataavailable = e => audioChunksRef.current.push(e.data);
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
+  async function toggleRecording() {
+    if (isRecording) {
+      // Stop recording and send
+      if (!mediaRecorderRef.current) return;
+      if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null; }
+      setIsRecording(false);
       setRecordingTime(0);
-      recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch { showToast("Нет доступа к микрофону"); }
+
+      await new Promise<void>(resolve => {
+        const recorder = mediaRecorderRef.current!;
+        const mimeType = recorder.mimeType || "audio/webm";
+        recorder.onstop = async () => {
+          const blob = new Blob(audioChunksRef.current, { type: mimeType });
+          recorder.stream.getTracks().forEach(t => t.stop());
+          const reader = new FileReader();
+          reader.onload = async () => {
+            try {
+              await sendMessage(reader.result as string, "voice");
+            } catch { showToast("Ошибка отправки голосового"); }
+            resolve();
+          };
+          reader.onerror = () => { showToast("Ошибка обработки записи"); resolve(); };
+          reader.readAsDataURL(blob);
+        };
+        recorder.stop();
+      });
+    } else {
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = getSupportedMimeType();
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        audioChunksRef.current = [];
+        recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+        recorder.start(200);
+        mediaRecorderRef.current = recorder;
+        setIsRecording(true);
+        setRecordingTime(0);
+        recordingTimerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+      } catch { showToast("Нет доступа к микрофону"); }
+    }
   }
 
-  async function stopRecording() {
-    if (!mediaRecorderRef.current) return;
-    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
-    setIsRecording(false);
-    setRecordingTime(0);
-    return new Promise<void>(resolve => {
-      mediaRecorderRef.current!.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        mediaRecorderRef.current?.stream.getTracks().forEach(t => t.stop());
-        const reader = new FileReader();
-        reader.onload = async () => {
-          await sendMessage(reader.result as string, "voice");
-          resolve();
-        };
-        reader.readAsDataURL(blob);
-      };
-      mediaRecorderRef.current!.stop();
-    });
+  function startCall(type: "audio" | "video") {
+    setCallType(type);
+    setCallState("ringing");
+    callTimerRef.current = setTimeout(() => {
+      setCallState("connected");
+      if (callTimerRef.current) clearTimeout(callTimerRef.current);
+      callTimerRef.current = setInterval(() => {}, 1000);
+    }, 3000) as unknown as ReturnType<typeof setInterval>;
+  }
+
+  function endCall() {
+    if (callTimerRef.current) { clearTimeout(callTimerRef.current); clearInterval(callTimerRef.current); }
+    setCallState("idle");
+    showToast("Звонок завершён");
   }
 
   function showContextMenu(e: React.MouseEvent, msgId: string) {
@@ -204,32 +243,62 @@ export default function ChatView({ id }: ChatViewProps) {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[200] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl"
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[9999] px-5 py-3 rounded-2xl font-bold text-[13px] text-[#003732] shadow-xl"
           style={{ background: "#46eedd" }}>{toast}</div>
       )}
 
-      {/* Call overlay */}
-      {showCallOverlay && (
-        <div className="fixed inset-0 z-[300] flex flex-col items-center justify-center gap-8"
-          style={{ background: "rgba(16,19,26,0.97)", backdropFilter: "blur(24px)" }}>
-          <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-[#46eedd]/30">
-            {chatAvatar
-              ? <img src={chatAvatar} alt="" className="w-full h-full object-cover" />
-              : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
-                  <span className="text-[40px] font-black text-[#bacac6]/30">{chatName.charAt(0)}</span>
-                </div>}
+      {/* Call Overlay */}
+      {callState !== "idle" && (
+        <div className="fixed inset-0 z-[9000] flex flex-col items-center justify-center gap-8"
+          style={{ background: "rgba(10,14,22,0.97)", backdropFilter: "blur(32px)" }}>
+
+          {/* Pulsing rings */}
+          <div className="relative flex items-center justify-center">
+            {callState === "ringing" && (
+              <>
+                <div className="absolute w-36 h-36 rounded-full animate-ping opacity-20"
+                  style={{ background: "#46eedd" }} />
+                <div className="absolute w-28 h-28 rounded-full animate-ping opacity-30 animation-delay-300"
+                  style={{ background: "#46eedd", animationDelay: "0.3s" }} />
+              </>
+            )}
+            <div className="w-24 h-24 rounded-full overflow-hidden ring-4 ring-[#46eedd]/40 z-10">
+              {chatAvatar
+                ? <img src={chatAvatar} alt="" className="w-full h-full object-cover" />
+                : <div className="w-full h-full bg-[#272a31] flex items-center justify-center">
+                    <span className="text-[40px] font-black text-[#bacac6]/30">{chatName.charAt(0)}</span>
+                  </div>}
+            </div>
           </div>
+
           <div className="text-center">
-            <h2 className="text-[22px] font-bold text-[#e1e2eb]">{chatName}</h2>
-            <p className="text-[#46eedd] text-[14px] mt-1 animate-pulse">
-              {showCallOverlay === "video" ? "Видеозвонок..." : "Голосовой звонок..."}
+            <h2 className="text-[24px] font-bold text-[#e1e2eb]">{chatName}</h2>
+            <p className="text-[#46eedd] text-[15px] mt-2 font-semibold">
+              {callState === "ringing"
+                ? (callType === "video" ? "🎥 Видеозвонок..." : "📞 Вызов...")
+                : (callType === "video" ? "🎥 Видеозвонок" : "📞 Разговор")}
             </p>
+            {callState === "connected" && (
+              <p className="text-[#bacac6]/50 text-[13px] mt-1">Соединено</p>
+            )}
           </div>
-          <div className="flex items-center gap-6">
-            <button onClick={() => { setShowCallOverlay(null); showToast("Звонок завершён"); }}
-              className="w-16 h-16 rounded-full bg-[#ff4444] flex items-center justify-center active:scale-90 transition-all">
-              <span className="material-symbols-outlined text-white text-[28px]" style={{ fontVariationSettings: "'FILL' 1" }}>call_end</span>
+
+          <div className="flex items-center gap-8">
+            {callState === "connected" && callType === "video" && (
+              <button className="w-14 h-14 rounded-full bg-[#1d2026] flex items-center justify-center text-[#bacac6] active:scale-90 transition-all">
+                <span className="material-symbols-outlined text-[24px]">videocam_off</span>
+              </button>
+            )}
+            <button onClick={endCall}
+              className="w-16 h-16 rounded-full flex items-center justify-center active:scale-90 transition-all"
+              style={{ background: "#ff4444", boxShadow: "0 8px 24px rgba(255,68,68,0.4)" }}>
+              <span className="material-symbols-outlined text-white text-[30px]" style={{ fontVariationSettings: "'FILL' 1" }}>call_end</span>
             </button>
+            {callState === "connected" && (
+              <button className="w-14 h-14 rounded-full bg-[#1d2026] flex items-center justify-center text-[#bacac6] active:scale-90 transition-all">
+                <span className="material-symbols-outlined text-[24px]">mic_off</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -262,7 +331,9 @@ export default function ChatView({ id }: ChatViewProps) {
                   <div className="w-10 h-10 rounded-full flex items-center justify-center"
                     style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
                     <span className="material-symbols-outlined text-[#003732] text-[20px]"
-                      style={{ fontVariationSettings: "'FILL' 1" }}>sync</span>
+                      style={{ fontVariationSettings: "'FILL' 1" }}>
+                      {forceGroup ? "group" : "sync"}
+                    </span>
                   </div>
                 ) : chatAvatar ? (
                   <img alt={chatName} className="w-10 h-10 rounded-full object-cover border border-white/10" src={chatAvatar} />
@@ -274,26 +345,20 @@ export default function ChatView({ id }: ChatViewProps) {
                 <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#46eedd] rounded-full border-2 border-[#10131a]" />
               </div>
               <div>
-                <h1 className="text-[15px] font-bold text-[#e1e2eb] leading-tight">
-                  {chatName || (isGroup ? "Общий чат" : "...")}
-                </h1>
+                <h1 className="text-[15px] font-bold text-[#e1e2eb] leading-tight">{chatName || "..."}</h1>
                 <span className="text-[11px] text-[#46eedd] font-semibold uppercase tracking-wider">В сети</span>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {!isGroup && (
-              <>
-                <button onClick={() => setShowCallOverlay("audio")}
-                  className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
-                  <span className="material-symbols-outlined text-[22px]">call</span>
-                </button>
-                <button onClick={() => setShowCallOverlay("video")}
-                  className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
-                  <span className="material-symbols-outlined text-[22px]">videocam</span>
-                </button>
-              </>
-            )}
+            <button onClick={() => startCall("audio")}
+              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
+              <span className="material-symbols-outlined text-[22px]">call</span>
+            </button>
+            <button onClick={() => startCall("video")}
+              className="w-10 h-10 flex items-center justify-center rounded-full text-[#bacac6] active:bg-[#1d2026] transition-colors">
+              <span className="material-symbols-outlined text-[22px]">videocam</span>
+            </button>
           </div>
         </div>
       </header>
@@ -336,7 +401,8 @@ export default function ChatView({ id }: ChatViewProps) {
                     style={msg.outgoing ? { background: "linear-gradient(135deg, #46eedd, #00d1c1)" } : {}}
                     onClick={e => msg.outgoing && showContextMenu(e, msg.id)}>
                     <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-[20px]" style={{ color: msg.outgoing ? "#003732" : "#46eedd", fontVariationSettings: "'FILL' 1" }}>mic</span>
+                      <span className="material-symbols-outlined text-[20px]"
+                        style={{ color: msg.outgoing ? "#003732" : "#46eedd", fontVariationSettings: "'FILL' 1" }}>mic</span>
                       <audio controls src={msg.content} className="h-8" style={{ maxWidth: 180 }} />
                     </div>
                   </div>
@@ -388,14 +454,16 @@ export default function ChatView({ id }: ChatViewProps) {
 
           {/* Recording indicator */}
           {isRecording && (
-            <div className="flex items-center justify-between px-2 py-2 mb-2 rounded-2xl"
-              style={{ background: "rgba(255,68,68,0.1)" }}>
+            <div className="flex items-center justify-between px-3 py-2.5 mb-2 rounded-2xl"
+              style={{ background: "rgba(255,68,68,0.1)", border: "1px solid rgba(255,68,68,0.2)" }}>
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                <span className="text-red-400 text-[13px] font-bold">Запись {formatRecordingTime(recordingTime)}</span>
+                <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" />
+                <span className="text-red-400 text-[13px] font-bold">REC {formatRecordingTime(recordingTime)}</span>
               </div>
-              <button onClick={stopRecording}
-                className="text-red-400 text-[12px] font-bold px-3 py-1 rounded-full border border-red-400/30">
+              <button onClick={toggleRecording}
+                className="flex items-center gap-1.5 text-red-400 text-[12px] font-bold px-3 py-1.5 rounded-full"
+                style={{ background: "rgba(255,68,68,0.15)" }}>
+                <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>send</span>
                 Отправить
               </button>
             </div>
@@ -439,15 +507,13 @@ export default function ChatView({ id }: ChatViewProps) {
               </button>
             ) : (
               <button
-                onMouseDown={startRecording}
-                onTouchStart={startRecording}
-                className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all shrink-0 ${
-                  isRecording
-                    ? "bg-red-500 animate-pulse"
-                    : "bg-[#1d2026] text-[#bacac6] hover:text-[#46eedd]"
-                }`}>
-                <span className="material-symbols-outlined text-[24px]"
-                  style={{ fontVariationSettings: isRecording ? "'FILL' 1" : "normal" }}>
+                onClick={toggleRecording}
+                className={`w-12 h-12 flex items-center justify-center rounded-2xl transition-all shrink-0 active:scale-90 ${
+                  isRecording ? "animate-pulse" : "bg-[#1d2026] text-[#bacac6] hover:text-[#46eedd]"
+                }`}
+                style={isRecording ? { background: "#ff4444" } : {}}>
+                <span className="material-symbols-outlined text-[24px] text-white"
+                  style={!isRecording ? { color: "inherit" } : { fontVariationSettings: "'FILL' 1" }}>
                   {isRecording ? "stop" : "mic"}
                 </span>
               </button>

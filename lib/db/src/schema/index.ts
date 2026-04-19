@@ -44,6 +44,7 @@ export const chatsTable = pgTable("chats", {
   id:         uuid("id").primaryKey().defaultRandom(),
   type:       chatTypeEnum("type").notNull().default("group"),
   name:       text("name"),
+  created_by: uuid("created_by"),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -70,11 +71,12 @@ export const messagesTable = pgTable("messages", {
 // ── training_events ───────────────────────────────────────────────────────
 export const trainingEventsTable = pgTable("training_events", {
   id:          uuid("id").primaryKey().defaultRandom(),
-  date:        text("date").notNull(),        // YYYY-MM-DD
+  date:        text("date").notNull(),
   title:       text("title").notNull(),
+  description: text("description").notNull().default(""),
   icon:        text("icon").notNull().default("fitness_center"),
-  time_start:  text("time_start").notNull(),  // HH:MM
-  time_end:    text("time_end").notNull(),    // HH:MM
+  time_start:  text("time_start").notNull(),
+  time_end:    text("time_end").notNull(),
   color:       text("color").notNull().default("primary"),
   created_by:  uuid("created_by").notNull(),
   created_at:  timestamp("created_at").notNull().defaultNow(),
@@ -85,6 +87,16 @@ export const trainingRegistrationsTable = pgTable("training_registrations", {
   id:         uuid("id").primaryKey().defaultRandom(),
   event_id:   uuid("event_id").notNull(),
   user_id:    uuid("user_id").notNull(),
+  created_at: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ── push_subscriptions ────────────────────────────────────────────────────
+export const pushSubscriptionsTable = pgTable("push_subscriptions", {
+  id:         uuid("id").primaryKey().defaultRandom(),
+  user_id:    uuid("user_id").notNull(),
+  endpoint:   text("endpoint").notNull().unique(),
+  p256dh:     text("p256dh").notNull(),
+  auth:       text("auth").notNull(),
   created_at: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -102,3 +114,4 @@ export type Message                = typeof messagesTable.$inferSelect;
 export type ChatMember             = typeof chatMembersTable.$inferSelect;
 export type TrainingEvent          = typeof trainingEventsTable.$inferSelect;
 export type TrainingRegistration   = typeof trainingRegistrationsTable.$inferSelect;
+export type PushSubscription       = typeof pushSubscriptionsTable.$inferSelect;

@@ -45,6 +45,7 @@ export const api = {
     list: () =>
       apiFetch<{
         group: { id: string; name: string; last_msg: string | null; last_time: string | null };
+        custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
         personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
       }>("/chats"),
     messages: (chatId: string) =>
@@ -60,6 +61,11 @@ export const api = {
       }),
     deleteMessage: (msgId: string) =>
       apiFetch(`/messages/${msgId}`, { method: "DELETE" }),
+    createGroup: (data: { name: string; member_ids: string[] }) =>
+      apiFetch<{ id: string; name: string; type: string }>("/group-chats", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
   },
 
   members: {
@@ -91,19 +97,27 @@ export const api = {
     list: (month: string) =>
       apiFetch<{
         events: {
-          id: string; date: string; title: string; icon: string;
+          id: string; date: string; title: string; description: string; icon: string;
           time_start: string; time_end: string; color: string; count: number;
         }[];
         my_registrations: string[];
       }>(`/training?month=${month}`),
-    create: (data: { date: string; title: string; icon: string; time_start: string; time_end: string; color: string }) =>
+    create: (data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string }) =>
       apiFetch("/training", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: string, data: { date: string; title: string; icon: string; time_start: string; time_end: string; color: string }) =>
+    update: (id: string, data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string }) =>
       apiFetch(`/training/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     remove: (id: string) => apiFetch(`/training/${id}`, { method: "DELETE" }),
     register: (id: string) =>
       apiFetch<{ registered: boolean }>(`/training/${id}/register`, { method: "POST" }),
     registrations: (id: string) =>
       apiFetch<{ user_id: string; name: string; avatar_url: string }[]>(`/training/${id}/registrations`),
+  },
+
+  push: {
+    vapidKey: () => apiFetch<{ publicKey: string }>("/push/vapid-key"),
+    subscribe: (sub: PushSubscriptionJSON) =>
+      apiFetch("/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
+    unsubscribe: (endpoint: string) =>
+      apiFetch("/push/unsubscribe", { method: "DELETE", body: JSON.stringify({ endpoint }) }),
   },
 };

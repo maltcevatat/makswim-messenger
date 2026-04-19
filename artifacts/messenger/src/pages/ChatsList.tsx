@@ -16,19 +16,64 @@ function formatTime(iso: string | null) {
   return d.toLocaleDateString("ru", { day: "numeric", month: "short" });
 }
 
+interface ChatsData {
+  group: { id: string; name: string; last_msg: string | null; last_time: string | null } | null;
+  custom_groups: { id: string; name: string; last_msg: string | null; last_time: string | null }[];
+  personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
+}
+
 export default function ChatsList() {
   const [, navigate] = useLocation();
   const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [search, setSearch] = useState("");
-  const [chatsData, setChatsData] = useState<{
-    group: { id: string; name: string; last_msg: string | null; last_time: string | null } | null;
-    personal: { id: string; name: string; avatar_url: string; last_msg: string | null; last_time: string | null }[];
-  }>({ group: null, personal: [] });
+  const [chatsData, setChatsData] = useState<ChatsData>({ group: null, custom_groups: [], personal: [] });
   const [loading, setLoading] = useState(true);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const [allMembers, setAllMembers] = useState<{ id: string; name: string; avatar_url: string }[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+
+  const loadChats = () =>
+    api.chats.list()
+      .then(d => setChatsData({ custom_groups: [], ...d }))
+      .catch(() => {})
+      .finally(() => setLoading(false));
 
   useEffect(() => {
-    api.chats.list().then(setChatsData).catch(() => {}).finally(() => setLoading(false));
+    loadChats();
+    const iv = setInterval(loadChats, 5000);
+    return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => {
+    if (showCreateGroup && allMembers.length === 0) {
+      api.members.list().then(m => setAllMembers(m.filter(u => u.id !== user?.id))).catch(() => {});
+    }
+  }, [showCreateGroup]);
+
+  async function createGroup() {
+    if (!groupName.trim()) return;
+    if (selectedIds.size === 0) return;
+    setCreating(true);
+    try {
+      const chat = await api.chats.createGroup({ name: groupName.trim(), member_ids: [...selectedIds] });
+      setShowCreateGroup(false);
+      setGroupName("");
+      setSelectedIds(new Set());
+      navigate(`/group-chat/${chat.id}`);
+    } catch {}
+    finally { setCreating(false); }
+  }
+
+  function toggleMember(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   const filtered = chatsData.personal.filter(c =>
     !search || c.name.toLowerCase().includes(search.toLowerCase())
@@ -38,6 +83,67 @@ export default function ChatsList() {
     <div className="min-h-screen" style={{ background: "#10131a", color: "#e1e2eb" }}>
       <div className="fixed top-0 right-0 w-[60%] h-[40%] pointer-events-none -z-10"
         style={{ background: "rgba(70,238,221,0.04)", filter: "blur(100px)" }} />
+
+      {/* Create Group Modal */}
+      {showCreateGroup && (
+        <div className="fixed inset-0 z-[300] flex items-end justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)" }}
+          onClick={() => setShowCreateGroup(false)}>
+          <div className="w-full max-w-lg rounded-[2rem] p-6 flex flex-col gap-4"
+            style={{ background: "#1d2026" }}
+            onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-[18px]">Новая группа</h3>
+              <button onClick={() => setShowCreateGroup(false)} className="text-[#bacac6]/50">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <input
+              className="bg-[#10131a] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[15px] outline-none"
+              style={{ caretColor: "#46eedd" }}
+              placeholder="Название группы"
+              value={groupName}
+              onChange={e => setGroupName(e.target.value)}
+            />
+
+            <div>
+              <p className="text-[11px] font-bold text-[#bacac6]/50 uppercase tracking-wider mb-3">
+                Участники ({selectedIds.size} выбрано)
+              </p>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {allMembers.map(m => {
+                  const sel = selectedIds.has(m.id);
+                  return (
+                    <button key={m.id}
+                      onClick={() => toggleMember(m.id)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-2xl transition-all ${sel ? "" : "hover:bg-[#10131a]"}`}
+                      style={sel ? { background: "rgba(70,238,221,0.12)" } : {}}>
+                      <div className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] shrink-0">
+                        {m.avatar_url
+                          ? <img src={m.avatar_url} alt="" className="w-full h-full object-cover" />
+                          : <div className="w-full h-full flex items-center justify-center">
+                              <span className="font-bold text-[#bacac6]/50">{m.name.charAt(0)}</span>
+                            </div>}
+                      </div>
+                      <span className="flex-1 text-left text-[14px] font-medium">{m.name}</span>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${sel ? "border-[#46eedd] bg-[#46eedd]" : "border-[#bacac6]/30"}`}>
+                        {sel && <span className="material-symbols-outlined text-[12px] text-[#003732]" style={{ fontVariationSettings: "'FILL' 1" }}>check</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button onClick={createGroup} disabled={creating || !groupName.trim() || selectedIds.size === 0}
+              className="w-full py-4 rounded-2xl font-bold text-[16px] text-[#003732] disabled:opacity-40"
+              style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
+              {creating ? "Создаю..." : "Создать группу"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <header className="fixed top-0 w-full z-50 border-b border-white/5"
@@ -58,12 +164,13 @@ export default function ChatsList() {
             </h1>
           </div>
           <div className="flex items-center gap-1">
-            <button className="w-10 h-10 flex items-center justify-center rounded-xl text-[#bacac6] hover:text-[#46eedd] transition-colors">
-              <span className="material-symbols-outlined">person_add</span>
-            </button>
-            <button className="w-10 h-10 flex items-center justify-center rounded-xl text-[#bacac6] hover:text-[#46eedd] transition-colors">
-              <span className="material-symbols-outlined">search</span>
-            </button>
+            {isAdmin && (
+              <button onClick={() => setShowCreateGroup(true)}
+                className="w-10 h-10 flex items-center justify-center rounded-xl text-[#46eedd] hover:bg-[#272a31] transition-colors"
+                title="Создать группу">
+                <span className="material-symbols-outlined">group_add</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -81,11 +188,11 @@ export default function ChatsList() {
           />
         </div>
 
-        {/* Group Chat */}
+        {/* Main Group Chat */}
         {!search && chatsData.group && (
           <button
             onClick={() => navigate(`/chat/${GROUP_CHAT_ID}`)}
-            className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] mb-6 text-left transition-all active:scale-[0.98]"
+            className="w-full flex items-center gap-4 p-4 rounded-[1.5rem] mb-3 text-left transition-all active:scale-[0.98]"
             style={{ background: "#1d2026", boxShadow: "0 2px 16px rgba(0,0,0,0.3)" }}>
             <div className="w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center"
               style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
@@ -110,12 +217,38 @@ export default function ChatsList() {
           </button>
         )}
 
+        {/* Custom Group Chats */}
+        {!search && chatsData.custom_groups.length > 0 && (
+          <>
+            <h2 className="text-[11px] font-extrabold tracking-[0.15em] uppercase text-[#bacac6]/50 mb-3 mt-2">
+              Групповые чаты
+            </h2>
+            <div className="flex flex-col gap-1 mb-4">
+              {chatsData.custom_groups.map(g => (
+                <button key={g.id}
+                  onClick={() => navigate(`/group-chat/${g.id}`)}
+                  className="flex items-center gap-4 p-3 -mx-2 w-full text-left rounded-3xl hover:bg-[#1d2026] transition-all active:bg-[#272a31]/50">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
+                    style={{ background: "rgba(70,238,221,0.1)" }}>
+                    <span className="material-symbols-outlined text-[#46eedd] text-[24px]" style={{ fontVariationSettings: "'FILL' 1" }}>group</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-center mb-0.5">
+                      <h4 className="font-bold text-[#e1e2eb] truncate text-[15px]">{g.name}</h4>
+                      <span className="text-[11px] text-[#bacac6]/50 ml-2 shrink-0">{formatTime(g.last_time)}</span>
+                    </div>
+                    <p className="text-[13px] text-[#bacac6]/70 truncate">{g.last_msg || "Нет сообщений"}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
         {/* Personal Messages */}
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-[11px] font-extrabold tracking-[0.15em] uppercase text-[#bacac6]/50">
-            Личные сообщения
-          </h2>
-        </div>
+        <h2 className="text-[11px] font-extrabold tracking-[0.15em] uppercase text-[#bacac6]/50 mb-3">
+          Личные сообщения
+        </h2>
 
         {loading ? (
           <div className="flex justify-center py-10">

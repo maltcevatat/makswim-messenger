@@ -1,31 +1,32 @@
 import { useState, useEffect, useCallback } from "react";
-import { useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/api";
+import BottomNav from "@/components/BottomNav";
 
 const DAYS_OF_WEEK = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const MONTH_NAMES = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 const WEEKDAY_NAMES = ["Воскресенье","Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
 
 const ICONS = [
-  { value: "pool", label: "Плавание" },
-  { value: "directions_run", label: "Бег" },
-  { value: "pedal_bike", label: "Велосипед" },
-  { value: "fitness_center", label: "Силовая" },
+  { value: "pool",              label: "Плавание" },
+  { value: "directions_run",    label: "Бег" },
+  { value: "pedal_bike",        label: "Велосипед" },
+  { value: "fitness_center",    label: "Силовая" },
   { value: "sports_gymnastics", label: "Гимнастика" },
-  { value: "self_improvement", label: "Йога" },
+  { value: "self_improvement",  label: "Йога" },
 ];
 
 const COLORS = [
-  { value: "primary", label: "Бирюзовый" },
+  { value: "primary",   label: "Бирюзовый" },
   { value: "secondary", label: "Синий" },
-  { value: "muted", label: "Серый" },
+  { value: "muted",     label: "Серый" },
 ];
 
 interface TrainingEvent {
   id: string;
   date: string;
   title: string;
+  description: string;
   icon: string;
   time_start: string;
   time_end: string;
@@ -35,6 +36,7 @@ interface TrainingEvent {
 
 interface EventForm {
   title: string;
+  description: string;
   icon: string;
   time_start: string;
   time_end: string;
@@ -53,7 +55,7 @@ function generateCalendarDays(year: number, month: number, events: TrainingEvent
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const daysInPrevMonth = new Date(year, month, 0).getDate();
-  const startOffset = (firstDay + 6) % 7; // Mon=0
+  const startOffset = (firstDay + 6) % 7;
   const today = new Date();
   const days: { n: number; prev?: boolean; next?: boolean; dot?: boolean; isToday?: boolean }[] = [];
 
@@ -72,7 +74,6 @@ function generateCalendarDays(year: number, month: number, events: TrainingEvent
 }
 
 export default function Calendar() {
-  const [, navigate] = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
@@ -85,13 +86,11 @@ export default function Calendar() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
-  // Admin modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<TrainingEvent | null>(null);
-  const [form, setForm] = useState<EventForm>({ title: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
+  const [form, setForm] = useState<EventForm>({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
   const [saving, setSaving] = useState(false);
 
-  // Registrations modal
   const [regsModal, setRegsModal] = useState<{ event: TrainingEvent; users: { name: string; avatar_url: string }[] } | null>(null);
 
   function showToast(msg: string) {
@@ -145,13 +144,13 @@ export default function Calendar() {
 
   function openAddModal() {
     setEditingEvent(null);
-    setForm({ title: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
+    setForm({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
     setModalOpen(true);
   }
 
   function openEditModal(ev: TrainingEvent) {
     setEditingEvent(ev);
-    setForm({ title: ev.title, icon: ev.icon, time_start: ev.time_start, time_end: ev.time_end, color: ev.color });
+    setForm({ title: ev.title, description: ev.description || "", icon: ev.icon, time_start: ev.time_start, time_end: ev.time_end, color: ev.color });
     setModalOpen(true);
   }
 
@@ -250,7 +249,7 @@ export default function Calendar() {
         <div className="fixed inset-0 z-[300] flex items-end justify-center p-4"
           style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)" }}
           onClick={() => setModalOpen(false)}>
-          <div className="w-full max-w-lg rounded-[2rem] p-6 flex flex-col gap-4"
+          <div className="w-full max-w-lg rounded-[2rem] p-6 flex flex-col gap-4 overflow-y-auto max-h-[90vh]"
             style={{ background: "#1d2026" }}
             onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center">
@@ -264,6 +263,7 @@ export default function Calendar() {
               {selectedDay} {MONTH_NAMES[viewMonth].toLowerCase()} {viewYear}
             </div>
 
+            {/* Title */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Название</label>
               <input
@@ -275,6 +275,19 @@ export default function Calendar() {
               />
             </div>
 
+            {/* Description */}
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Описание тренировки</label>
+              <textarea
+                className="bg-[#10131a] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[14px] outline-none resize-none"
+                style={{ caretColor: "#46eedd", minHeight: 90 }}
+                placeholder="Опишите программу, цели, особенности тренировки..."
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+
+            {/* Time */}
             <div className="flex gap-3">
               <div className="flex-1 flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Начало</label>
@@ -290,6 +303,7 @@ export default function Calendar() {
               </div>
             </div>
 
+            {/* Icon */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Тип</label>
               <div className="grid grid-cols-3 gap-2">
@@ -305,6 +319,7 @@ export default function Calendar() {
               </div>
             </div>
 
+            {/* Color */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Цвет</label>
               <div className="flex gap-2">
@@ -331,20 +346,10 @@ export default function Calendar() {
       <header className="fixed top-0 w-full z-50 border-b border-white/5"
         style={{ background: "rgba(16,19,26,0.92)", backdropFilter: "blur(24px)" }}>
         <div className="flex justify-between items-center px-5 py-3.5 max-w-lg mx-auto">
-          <div className="flex items-center gap-3">
-            <button onClick={() => navigate("/profile")}
-              className="w-9 h-9 rounded-full overflow-hidden bg-[#272a31] ring-2 ring-[#46eedd]/20 shrink-0">
-              {user?.avatar_url
-                ? <img alt="me" src={user.avatar_url} className="w-full h-full object-cover" />
-                : <div className="w-full h-full flex items-center justify-center">
-                    <span className="material-symbols-outlined text-[#bacac6] text-[18px]">person</span>
-                  </div>}
-            </button>
-            <span className="text-[1.2rem] font-extrabold tracking-tighter text-transparent bg-clip-text"
-              style={{ backgroundImage: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
-              MAKSWIM
-            </span>
-          </div>
+          <span className="text-[1.2rem] font-extrabold tracking-tighter text-transparent bg-clip-text"
+            style={{ backgroundImage: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
+            MAKSWIM
+          </span>
           {isAdmin && (
             <button onClick={openAddModal}
               className="w-10 h-10 flex items-center justify-center rounded-full text-[#46eedd] hover:bg-[#272a31] transition-colors active:scale-90"
@@ -448,53 +453,65 @@ export default function Calendar() {
               )}
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {dayEvents.map(ev => {
                 const isJoined = myRegs.has(ev.id);
                 return (
-                  <div key={ev.id} className="bg-[#1d2026] p-4 rounded-3xl flex items-center gap-4">
-                    <div className="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center"
-                      style={{ background: eventBg(ev.color), color: eventIconColor(ev.color) }}>
-                      <span className="material-symbols-outlined text-[20px]"
-                        style={{ fontVariationSettings: "'FILL' 1" }}>{ev.icon}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
-                      <div className="flex items-center gap-1 text-[#bacac6]/60 text-[11px] mt-0.5">
-                        <span className="material-symbols-outlined text-[12px]">schedule</span>
-                        <span>{ev.time_start} — {ev.time_end}</span>
-                        {ev.count > 0 && (
-                          <span className="ml-2 text-[#46eedd]/70">· {ev.count} чел.</span>
+                  <div key={ev.id} className="bg-[#1d2026] rounded-3xl overflow-hidden">
+                    {/* Event header */}
+                    <div className="flex items-center gap-4 p-4">
+                      <div className="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center"
+                        style={{ background: eventBg(ev.color), color: eventIconColor(ev.color) }}>
+                        <span className="material-symbols-outlined text-[20px]"
+                          style={{ fontVariationSettings: "'FILL' 1" }}>{ev.icon}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
+                        <div className="flex items-center gap-1 text-[#bacac6]/60 text-[11px] mt-0.5">
+                          <span className="material-symbols-outlined text-[12px]">schedule</span>
+                          <span>{ev.time_start} — {ev.time_end}</span>
+                          {ev.count > 0 && (
+                            <span className="ml-2 text-[#46eedd]/70">· {ev.count} чел.</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isAdmin && (
+                          <>
+                            <button onClick={() => showRegistrations(ev)}
+                              className="w-8 h-8 flex items-center justify-center rounded-xl text-[#46eedd]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all"
+                              title="Участники">
+                              <span className="material-symbols-outlined text-[18px]">group</span>
+                            </button>
+                            <button onClick={() => openEditModal(ev)}
+                              className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all">
+                              <span className="material-symbols-outlined text-[18px]">edit</span>
+                            </button>
+                            <button onClick={() => deleteEvent(ev.id)}
+                              className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/30 hover:text-[#ffb4ab] hover:bg-[#ffb4ab]/10 transition-all">
+                              <span className="material-symbols-outlined text-[18px]">delete</span>
+                            </button>
+                          </>
                         )}
+                        <button
+                          onClick={() => toggleReg(ev.id)}
+                          className={`ml-1 px-4 py-2 rounded-full text-[11px] font-bold transition-all active:scale-90 ${
+                            isJoined ? "text-[#003732]" : "text-[#bacac6]/60 border border-[#bacac6]/20 hover:border-[#46eedd]/30"
+                          }`}
+                          style={isJoined ? { background: "#46eedd" } : {}}>
+                          {isJoined ? "Участвую" : "Записаться"}
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isAdmin && (
-                        <>
-                          <button onClick={() => showRegistrations(ev)}
-                            className="w-8 h-8 flex items-center justify-center rounded-xl text-[#46eedd]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all"
-                            title="Участники">
-                            <span className="material-symbols-outlined text-[18px]">group</span>
-                          </button>
-                          <button onClick={() => openEditModal(ev)}
-                            className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all">
-                            <span className="material-symbols-outlined text-[18px]">edit</span>
-                          </button>
-                          <button onClick={() => deleteEvent(ev.id)}
-                            className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/30 hover:text-[#ffb4ab] hover:bg-[#ffb4ab]/10 transition-all">
-                            <span className="material-symbols-outlined text-[18px]">delete</span>
-                          </button>
-                        </>
-                      )}
-                      <button
-                        onClick={() => toggleReg(ev.id)}
-                        className={`ml-1 px-4 py-2 rounded-full text-[11px] font-bold transition-all active:scale-90 ${
-                          isJoined ? "text-[#003732]" : "text-[#bacac6]/60 border border-[#bacac6]/20 hover:border-[#46eedd]/30"
-                        }`}
-                        style={isJoined ? { background: "#46eedd", boxShadow: "0 4px 12px rgba(70,238,221,0.25)" } : {}}>
-                        {isJoined ? "Участвую" : "Записаться"}
-                      </button>
-                    </div>
+
+                    {/* Description */}
+                    {ev.description && (
+                      <div className="px-4 pb-4 pt-0">
+                        <div className="bg-[#10131a] rounded-2xl px-4 py-3">
+                          <p className="text-[13px] text-[#bacac6]/70 leading-relaxed">{ev.description}</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -503,30 +520,7 @@ export default function Calendar() {
         </section>
       </main>
 
-      {/* Bottom Nav */}
-      <nav className="fixed bottom-0 w-full z-50 border-t border-white/5"
-        style={{ background: "rgba(16,19,26,0.96)", backdropFilter: "blur(24px)" }}>
-        <div className="flex justify-around items-center px-4 pt-3 pb-7 max-w-lg mx-auto">
-          <button onClick={() => navigate("/")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">chat_bubble</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Чаты</span>
-          </button>
-          <button onClick={() => navigate("/calls")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">videocam</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Звонки</span>
-          </button>
-          <div className="flex flex-col items-center gap-1">
-            <div className="w-14 h-9 rounded-2xl flex items-center justify-center" style={{ background: "#46eedd" }}>
-              <span className="material-symbols-outlined text-[#003732] text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>calendar_today</span>
-            </div>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase text-[#46eedd]">Календарь</span>
-          </div>
-          <button onClick={() => navigate("/settings")} className="flex flex-col items-center gap-1 text-[#bacac6]/40 hover:text-[#46eedd] transition-colors active:scale-90">
-            <span className="material-symbols-outlined text-[22px]">settings</span>
-            <span className="text-[9px] font-extrabold tracking-widest uppercase">Настройки</span>
-          </button>
-        </div>
-      </nav>
+      <BottomNav active="calendar" />
     </div>
   );
 }

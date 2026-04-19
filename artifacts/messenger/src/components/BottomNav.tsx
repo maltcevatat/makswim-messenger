@@ -2,21 +2,24 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/context/AuthContext";
 
 interface BottomNavProps {
-  active?: "chats" | "members" | "calendar" | "calls" | "settings" | "admin" | "profile";
+  active?: "chats" | "members" | "calendar" | "admin" | "profile";
 }
 
 export default function BottomNav({ active }: BottomNavProps) {
   const [, navigate] = useLocation();
   const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const items = [
-    { id: "chats",   icon: "chat_bubble",  label: "Чаты",    path: "/" },
-    { id: "members", icon: "group",        label: "Участники", path: "/members" },
-    { id: "calls",   icon: "call",         label: "Звонки",   path: "/calls" },
-    ...(user?.role === "admin"
-      ? [{ id: "admin", icon: "shield", label: "Админ", path: "/admin" }]
+    { id: "chats",    icon: "chat_bubble",    label: "Чаты",      path: "/" },
+    { id: "calendar", icon: "calendar_month", label: "Календарь", path: "/calendar" },
+    ...(isAdmin
+      ? [
+          { id: "members", icon: "group",   label: "Участники", path: "/members" },
+          { id: "admin",   icon: "shield",  label: "Админ",     path: "/admin" },
+        ]
       : []),
-    { id: "profile", icon: "person",       label: "Профиль",  path: "/profile" },
+    { id: "profile", icon: "person", label: "Профиль", path: "/profile" },
   ];
 
   return (

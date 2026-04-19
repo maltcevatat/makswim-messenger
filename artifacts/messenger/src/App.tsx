@@ -10,10 +10,36 @@ import Profile      from "@/pages/Profile";
 import Calendar     from "@/pages/Calendar";
 import Members      from "@/pages/Members";
 import Admin        from "@/pages/Admin";
-import Calls        from "@/pages/Calls";
 import Settings     from "@/pages/Settings";
+import { api } from "@/api";
 
 const queryClient = new QueryClient();
+
+async function registerPush() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js");
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return;
+
+    const { publicKey } = await api.push.vapidKey();
+    if (!publicKey) return;
+
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) {
+      await api.push.subscribe(existing.toJSON() as PushSubscriptionJSON);
+      return;
+    }
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: publicKey,
+    });
+    await api.push.subscribe(sub.toJSON() as PushSubscriptionJSON);
+  } catch (e) {
+    console.warn("Push registration failed:", e);
+  }
+}
 
 function AuthGuard({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
   const { user, loading } = useAuth();
@@ -24,6 +50,10 @@ function AuthGuard({ children, adminOnly = false }: { children: React.ReactNode;
     if (!user) { navigate("/login"); return; }
     if (adminOnly && user.role !== "admin") { navigate("/"); }
   }, [user, loading, adminOnly, navigate]);
+
+  useEffect(() => {
+    if (user) registerPush().catch(() => {});
+  }, [user]);
 
   if (loading) {
     return (
@@ -48,6 +78,9 @@ function Router() {
       <Route path="/chat/:id">
         {(p) => <AuthGuard><ChatView id={p.id} /></AuthGuard>}
       </Route>
+      <Route path="/group-chat/:id">
+        {(p) => <AuthGuard><ChatView id={p.id} forceGroup={true} /></AuthGuard>}
+      </Route>
       <Route path="/profile">
         <AuthGuard><Profile /></AuthGuard>
       </Route>
@@ -55,13 +88,10 @@ function Router() {
         <AuthGuard><Calendar /></AuthGuard>
       </Route>
       <Route path="/members">
-        <AuthGuard><Members /></AuthGuard>
+        <AuthGuard adminOnly><Members /></AuthGuard>
       </Route>
       <Route path="/admin">
         <AuthGuard adminOnly><Admin /></AuthGuard>
-      </Route>
-      <Route path="/calls">
-        <AuthGuard><Calls /></AuthGuard>
       </Route>
       <Route path="/settings">
         <AuthGuard><Settings /></AuthGuard>
