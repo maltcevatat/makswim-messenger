@@ -136,6 +136,86 @@ router.get("/chats", async (req: AuthRequest, res) => {
   res.json({ custom_groups: customGroupsWithMsgs, personal: personalChats });
 });
 
+// GET /api/group-chats/:id/members (admin only)
+router.get("/group-chats/:id/members", requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+
+  const chat = await db
+    .select({ id: chatsTable.id })
+    .from(chatsTable)
+    .where(and(eq(chatsTable.id, id), eq(chatsTable.type, "group")))
+    .limit(1);
+
+  if (chat.length === 0) { res.status(404).json({ error: "Group not found" }); return; }
+
+  const members = await db
+    .select({
+      id:         usersTable.id,
+      name:       usersTable.name,
+      avatar_url: usersTable.avatar_url,
+      role:       usersTable.role,
+    })
+    .from(chatMembersTable)
+    .innerJoin(usersTable, eq(chatMembersTable.user_id, usersTable.id))
+    .where(eq(chatMembersTable.chat_id, id));
+
+  res.json(members);
+});
+
+// POST /api/group-chats/:id/members — add members (admin only)
+router.post("/group-chats/:id/members", requireAdmin, async (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { user_ids } = req.body as { user_ids: string[] };
+
+  if (!Array.isArray(user_ids) || user_ids.length === 0) {
+    res.status(400).json({ error: "user_ids must be non-empty array" }); return;
+  }
+
+  const chat = await db
+    .select({ id: chatsTable.id })
+    .from(chatsTable)
+    .where(and(eq(chatsTable.id, id), eq(chatsTable.type, "group")))
+    .limit(1);
+
+  if (chat.length === 0) { res.status(404).json({ error: "Group not found" }); return; }
+
+  // Find which users are already members to avoid duplicates
+  const existing = await db
+    .select({ user_id: chatMembersTable.user_id })
+    .from(chatMembersTable)
+    .where(and(eq(chatMembersTable.chat_id, id), inArray(chatMembersTable.user_id, user_ids)));
+
+  const existingIds = new Set(existing.map(e => e.user_id));
+  const toAdd = user_ids.filter(uid => !existingIds.has(uid));
+
+  if (toAdd.length > 0) {
+    await db.insert(chatMembersTable).values(
+      toAdd.map(uid => ({ chat_id: id, user_id: uid }))
+    );
+  }
+
+  res.json({ added: toAdd.length });
+});
+
+// DELETE /api/group-chats/:id/members/:userId — remove member (admin only)
+router.delete("/group-chats/:id/members/:userId", requireAdmin, async (req: AuthRequest, res) => {
+  const { id, userId } = req.params;
+
+  const chat = await db
+    .select({ id: chatsTable.id })
+    .from(chatsTable)
+    .where(and(eq(chatsTable.id, id), eq(chatsTable.type, "group")))
+    .limit(1);
+
+  if (chat.length === 0) { res.status(404).json({ error: "Group not found" }); return; }
+
+  await db.delete(chatMembersTable).where(
+    and(eq(chatMembersTable.chat_id, id), eq(chatMembersTable.user_id, userId))
+  );
+
+  res.json({ ok: true });
+});
+
 // GET /api/chats/:chatId/stream — SSE real-time stream
 router.get("/chats/:chatId/stream", async (req: AuthRequest, res) => {
   const { chatId } = req.params;

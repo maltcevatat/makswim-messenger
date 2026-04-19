@@ -83,6 +83,17 @@ export const api = {
       }),
     deleteGroup: (chatId: string) =>
       apiFetch(`/group-chats/${chatId}`, { method: "DELETE" }),
+    groupMembers: (chatId: string) =>
+      apiFetch<{ id: string; name: string; avatar_url: string; role: string }[]>(
+        `/group-chats/${chatId}/members`
+      ),
+    addGroupMembers: (chatId: string, user_ids: string[]) =>
+      apiFetch<{ added: number }>(`/group-chats/${chatId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ user_ids }),
+      }),
+    removeGroupMember: (chatId: string, userId: string) =>
+      apiFetch(`/group-chats/${chatId}/members/${userId}`, { method: "DELETE" }),
   },
 
   members: {
