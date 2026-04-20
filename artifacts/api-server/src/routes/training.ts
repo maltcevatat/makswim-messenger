@@ -43,14 +43,14 @@ router.get("/training", async (req: AuthRequest, res) => {
 
 // POST /api/training  (admin only)
 router.post("/training", requireAdmin, async (req: AuthRequest, res) => {
-  const { date, title, description = "", icon = "fitness_center", time_start, time_end, color = "primary" } = req.body;
+  const { date, title, description = "", icon = "fitness_center", time_start, time_end, color = "primary", category = "training" } = req.body;
   if (!date || !title || !time_start || !time_end) {
     res.status(400).json({ error: "date, title, time_start, time_end are required" });
     return;
   }
   const [event] = await db
     .insert(trainingEventsTable)
-    .values({ date, title, description, icon, time_start, time_end, color, created_by: req.user!.id })
+    .values({ date, title, description, icon, time_start, time_end, color, category, created_by: req.user!.id })
     .returning();
   res.json({ ...event, count: 0 });
 });
@@ -58,10 +58,10 @@ router.post("/training", requireAdmin, async (req: AuthRequest, res) => {
 // PUT /api/training/:id  (admin only)
 router.put("/training/:id", requireAdmin, async (req: AuthRequest, res) => {
   const { id } = req.params;
-  const { date, title, description, icon, time_start, time_end, color } = req.body;
+  const { date, title, description, icon, time_start, time_end, color, category } = req.body;
   const [event] = await db
     .update(trainingEventsTable)
-    .set({ date, title, description, icon, time_start, time_end, color })
+    .set({ date, title, description, icon, time_start, time_end, color, category })
     .where(eq(trainingEventsTable.id, id))
     .returning();
   if (!event) { res.status(404).json({ error: "Event not found" }); return; }

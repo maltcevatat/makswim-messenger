@@ -134,13 +134,13 @@ export const api = {
       apiFetch<{
         events: {
           id: string; date: string; title: string; description: string; icon: string;
-          time_start: string; time_end: string; color: string; count: number;
+          time_start: string; time_end: string; color: string; category: string; count: number;
         }[];
         my_registrations: string[];
       }>(`/training?month=${month}`),
-    create: (data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string }) =>
+    create: (data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string; category: string }) =>
       apiFetch("/training", { method: "POST", body: JSON.stringify(data) }),
-    update: (id: string, data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string }) =>
+    update: (id: string, data: { date: string; title: string; description: string; icon: string; time_start: string; time_end: string; color: string; category: string }) =>
       apiFetch(`/training/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     remove: (id: string) => apiFetch(`/training/${id}`, { method: "DELETE" }),
     register: (id: string) =>

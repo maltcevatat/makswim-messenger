@@ -82,6 +82,7 @@ export const trainingEventsTable = pgTable("training_events", {
   time_start:  text("time_start").notNull(),
   time_end:    text("time_end").notNull(),
   color:       text("color").notNull().default("primary"),
+  category:    text("category").notNull().default("training"),
   created_by:  uuid("created_by").notNull(),
   created_at:  timestamp("created_at").notNull().defaultNow(),
 });

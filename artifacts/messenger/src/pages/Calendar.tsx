@@ -16,6 +16,18 @@ const ICONS = [
   { value: "self_improvement",  label: "Йога" },
 ];
 
+const MEAL_ICONS = [
+  { value: "free_breakfast", label: "Завтрак" },
+  { value: "restaurant",     label: "Обед" },
+  { value: "dinner_dining",  label: "Ужин" },
+];
+
+const MEAL_LABELS: Record<string, string> = {
+  free_breakfast: "Завтрак",
+  restaurant:     "Обед",
+  dinner_dining:  "Ужин",
+};
+
 const COLORS = [
   { value: "primary",   label: "Бирюзовый" },
   { value: "secondary", label: "Синий" },
@@ -31,6 +43,7 @@ interface TrainingEvent {
   time_start: string;
   time_end: string;
   color: string;
+  category: string;
   count: number;
 }
 
@@ -41,6 +54,7 @@ interface EventForm {
   time_start: string;
   time_end: string;
   color: string;
+  category: string;
 }
 
 function getDateStr(year: number, month: number, day: number) {
@@ -88,7 +102,7 @@ export default function Calendar() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<TrainingEvent | null>(null);
-  const [form, setForm] = useState<EventForm>({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
+  const [form, setForm] = useState<EventForm>({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary", category: "training" });
   const [saving, setSaving] = useState(false);
 
   const [regsModal, setRegsModal] = useState<{ event: TrainingEvent; users: { name: string; avatar_url: string }[] } | null>(null);
@@ -144,13 +158,13 @@ export default function Calendar() {
 
   function openAddModal() {
     setEditingEvent(null);
-    setForm({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary" });
+    setForm({ title: "", description: "", icon: "fitness_center", time_start: "07:00", time_end: "08:30", color: "primary", category: "training" });
     setModalOpen(true);
   }
 
   function openEditModal(ev: TrainingEvent) {
     setEditingEvent(ev);
-    setForm({ title: ev.title, description: ev.description || "", icon: ev.icon, time_start: ev.time_start, time_end: ev.time_end, color: ev.color });
+    setForm({ title: ev.title, description: ev.description || "", icon: ev.icon, time_start: ev.time_start, time_end: ev.time_end, color: ev.color, category: ev.category || "training" });
     setModalOpen(true);
   }
 
@@ -189,11 +203,13 @@ export default function Calendar() {
   function eventBg(color: string) {
     if (color === "primary") return "linear-gradient(135deg, #46eedd, #00d1c1)";
     if (color === "secondary") return "rgba(52,61,150,0.6)";
+    if (color === "food") return "linear-gradient(135deg, #ff9f43, #ee5a24)";
     return "#32353c";
   }
   function eventIconColor(color: string) {
     if (color === "primary") return "#003732";
     if (color === "secondary") return "#a8afff";
+    if (color === "food") return "#fff5e6";
     return "#859491";
   }
 
@@ -252,8 +268,10 @@ export default function Calendar() {
           <div className="w-full max-w-lg rounded-[2rem] p-6 flex flex-col gap-4 overflow-y-auto max-h-[90vh]"
             style={{ background: "#1d2026" }}
             onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
             <div className="flex justify-between items-center">
-              <h3 className="font-bold text-[18px]">{editingEvent ? "Редактировать" : "Новая тренировка"}</h3>
+              <h3 className="font-bold text-[18px]">{editingEvent ? "Редактировать" : "Новое событие"}</h3>
               <button onClick={() => setModalOpen(false)} className="text-[#bacac6]/50">
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -263,13 +281,51 @@ export default function Calendar() {
               {selectedDay} {MONTH_NAMES[viewMonth].toLowerCase()} {viewYear}
             </div>
 
+            {/* Category tabs */}
+            {!editingEvent && (
+              <div className="flex gap-2 bg-[#10131a] p-1 rounded-2xl">
+                <button
+                  onClick={() => setForm(f => ({ ...f, category: "training", icon: "fitness_center", color: "primary" }))}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-bold transition-all ${form.category === "training" ? "text-[#003732]" : "text-[#bacac6]/50"}`}
+                  style={form.category === "training" ? { background: "linear-gradient(135deg, #46eedd, #00d1c1)" } : {}}>
+                  <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>fitness_center</span>
+                  Тренировка
+                </button>
+                <button
+                  onClick={() => setForm(f => ({ ...f, category: "meal", icon: "free_breakfast", color: "food" }))}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[13px] font-bold transition-all ${form.category === "meal" ? "text-[#fff5e6]" : "text-[#bacac6]/50"}`}
+                  style={form.category === "meal" ? { background: "linear-gradient(135deg, #ff9f43, #ee5a24)" } : {}}>
+                  <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>restaurant_menu</span>
+                  Питание
+                </button>
+              </div>
+            )}
+
+            {/* Meal type picker */}
+            {form.category === "meal" && (
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Приём пищи</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {MEAL_ICONS.map(ic => (
+                    <button key={ic.value}
+                      onClick={() => setForm(f => ({ ...f, icon: ic.value }))}
+                      className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-[13px] font-bold transition-all ${form.icon === ic.value ? "text-[#fff5e6]" : "text-[#bacac6]/50 bg-[#10131a]"}`}
+                      style={form.icon === ic.value ? { background: "linear-gradient(135deg, #ff9f43, #ee5a24)" } : {}}>
+                      <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{ic.value}</span>
+                      {ic.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Title */}
             <div className="flex flex-col gap-1">
               <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Название</label>
               <input
                 className="bg-[#10131a] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[15px] outline-none"
-                style={{ caretColor: "#46eedd" }}
-                placeholder="Например: Командный заплыв"
+                style={{ caretColor: form.category === "meal" ? "#ff9f43" : "#46eedd" }}
+                placeholder={form.category === "meal" ? "Например: Овсянка с фруктами" : "Например: Командный заплыв"}
                 value={form.title}
                 onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               />
@@ -277,11 +333,13 @@ export default function Calendar() {
 
             {/* Description */}
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Описание тренировки</label>
+              <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">
+                {form.category === "meal" ? "Состав / заметки" : "Описание тренировки"}
+              </label>
               <textarea
                 className="bg-[#10131a] text-[#e1e2eb] rounded-2xl px-4 py-3.5 text-[14px] outline-none resize-none"
-                style={{ caretColor: "#46eedd", minHeight: 90 }}
-                placeholder="Опишите программу, цели, особенности тренировки..."
+                style={{ caretColor: form.category === "meal" ? "#ff9f43" : "#46eedd", minHeight: 75 }}
+                placeholder={form.category === "meal" ? "Состав блюд, КБЖУ, особенности..." : "Опишите программу, цели, особенности тренировки..."}
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               />
@@ -303,40 +361,44 @@ export default function Calendar() {
               </div>
             </div>
 
-            {/* Icon */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Тип</label>
-              <div className="grid grid-cols-3 gap-2">
-                {ICONS.map(ic => (
-                  <button key={ic.value}
-                    onClick={() => setForm(f => ({ ...f, icon: ic.value }))}
-                    className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all ${form.icon === ic.value ? "text-[#003732]" : "text-[#bacac6]/70 bg-[#10131a]"}`}
-                    style={form.icon === ic.value ? { background: "#46eedd" } : {}}>
-                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{ic.value}</span>
-                    {ic.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Color */}
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Цвет</label>
-              <div className="flex gap-2">
-                {COLORS.map(c => (
-                  <button key={c.value}
-                    onClick={() => setForm(f => ({ ...f, color: c.value }))}
-                    className={`flex-1 py-2.5 rounded-xl text-[13px] font-medium transition-all border ${form.color === c.value ? "border-[#46eedd] text-[#46eedd]" : "border-[#272a31] text-[#bacac6]/50"}`}>
-                    {c.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Training-only: Icon + Color */}
+            {form.category === "training" && (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Тип</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {ICONS.map(ic => (
+                      <button key={ic.value}
+                        onClick={() => setForm(f => ({ ...f, icon: ic.value }))}
+                        className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all ${form.icon === ic.value ? "text-[#003732]" : "text-[#bacac6]/70 bg-[#10131a]"}`}
+                        style={form.icon === ic.value ? { background: "#46eedd" } : {}}>
+                        <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>{ic.value}</span>
+                        {ic.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] font-bold text-[#bacac6]/60 uppercase tracking-wider">Цвет</label>
+                  <div className="flex gap-2">
+                    {COLORS.map(c => (
+                      <button key={c.value}
+                        onClick={() => setForm(f => ({ ...f, color: c.value }))}
+                        className={`flex-1 py-2.5 rounded-xl text-[13px] font-medium transition-all border ${form.color === c.value ? "border-[#46eedd] text-[#46eedd]" : "border-[#272a31] text-[#bacac6]/50"}`}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             <button onClick={saveEvent} disabled={saving}
-              className="w-full py-4 rounded-2xl font-bold text-[16px] text-[#003732] mt-1 disabled:opacity-60"
-              style={{ background: "linear-gradient(135deg, #46eedd, #00d1c1)" }}>
-              {saving ? "Сохраняю..." : editingEvent ? "Сохранить" : "Создать тренировку"}
+              className="w-full py-4 rounded-2xl font-bold text-[16px] mt-1 disabled:opacity-60"
+              style={form.category === "meal"
+                ? { background: "linear-gradient(135deg, #ff9f43, #ee5a24)", color: "#fff5e6" }
+                : { background: "linear-gradient(135deg, #46eedd, #00d1c1)", color: "#003732" }}>
+              {saving ? "Сохраняю..." : editingEvent ? "Сохранить" : form.category === "meal" ? "Добавить питание" : "Создать тренировку"}
             </button>
           </div>
         </div>
@@ -443,12 +505,12 @@ export default function Calendar() {
           ) : dayEvents.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-10 text-center">
               <span className="material-symbols-outlined text-[40px] text-[#bacac6]/20">event_busy</span>
-              <p className="text-[#bacac6]/40 text-[14px]">На этот день тренировок нет</p>
+              <p className="text-[#bacac6]/40 text-[14px]">На этот день событий нет</p>
               {isAdmin && (
                 <button onClick={openAddModal}
                   className="mt-2 px-6 py-2.5 rounded-full text-[13px] font-bold text-[#003732]"
                   style={{ background: "#46eedd" }}>
-                  Добавить тренировку
+                  Добавить
                 </button>
               )}
             </div>
@@ -466,11 +528,19 @@ export default function Calendar() {
                           style={{ fontVariationSettings: "'FILL' 1" }}>{ev.icon}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-[14px] text-[#e1e2eb]">{ev.title}</h3>
+                          {ev.category === "meal" && MEAL_LABELS[ev.icon] && (
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wider uppercase"
+                              style={{ background: "rgba(255,159,67,0.15)", color: "#ff9f43" }}>
+                              {MEAL_LABELS[ev.icon]}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1 text-[#bacac6]/60 text-[11px] mt-0.5">
                           <span className="material-symbols-outlined text-[12px]">schedule</span>
                           <span>{ev.time_start} — {ev.time_end}</span>
-                          {ev.count > 0 && (
+                          {ev.category !== "meal" && ev.count > 0 && (
                             <span className="ml-2 text-[#46eedd]/70">· {ev.count} чел.</span>
                           )}
                         </div>
@@ -478,11 +548,13 @@ export default function Calendar() {
                       <div className="flex items-center gap-1 shrink-0">
                         {isAdmin && (
                           <>
-                            <button onClick={() => showRegistrations(ev)}
-                              className="w-8 h-8 flex items-center justify-center rounded-xl text-[#46eedd]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all"
-                              title="Участники">
-                              <span className="material-symbols-outlined text-[18px]">group</span>
-                            </button>
+                            {ev.category !== "meal" && (
+                              <button onClick={() => showRegistrations(ev)}
+                                className="w-8 h-8 flex items-center justify-center rounded-xl text-[#46eedd]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all"
+                                title="Участники">
+                                <span className="material-symbols-outlined text-[18px]">group</span>
+                              </button>
+                            )}
                             <button onClick={() => openEditModal(ev)}
                               className="w-8 h-8 flex items-center justify-center rounded-xl text-[#bacac6]/50 hover:text-[#46eedd] hover:bg-[#272a31] transition-all">
                               <span className="material-symbols-outlined text-[18px]">edit</span>
@@ -493,14 +565,16 @@ export default function Calendar() {
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => toggleReg(ev.id)}
-                          className={`ml-1 px-4 py-2 rounded-full text-[11px] font-bold transition-all active:scale-90 ${
-                            isJoined ? "text-[#003732]" : "text-[#bacac6]/60 border border-[#bacac6]/20 hover:border-[#46eedd]/30"
-                          }`}
-                          style={isJoined ? { background: "#46eedd" } : {}}>
-                          {isJoined ? "Участвую" : "Записаться"}
-                        </button>
+                        {ev.category !== "meal" && (
+                          <button
+                            onClick={() => toggleReg(ev.id)}
+                            className={`ml-1 px-4 py-2 rounded-full text-[11px] font-bold transition-all active:scale-90 ${
+                              isJoined ? "text-[#003732]" : "text-[#bacac6]/60 border border-[#bacac6]/20 hover:border-[#46eedd]/30"
+                            }`}
+                            style={isJoined ? { background: "#46eedd" } : {}}>
+                            {isJoined ? "Участвую" : "Записаться"}
+                          </button>
+                        )}
                       </div>
                     </div>
 
