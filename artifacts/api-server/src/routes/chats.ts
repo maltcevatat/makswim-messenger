@@ -314,7 +314,6 @@ router.get("/chats/:chatId/messages", async (req: AuthRequest, res) => {
       sender_id:         messagesTable.sender_id,
       client_message_id: messagesTable.client_message_id,
       sender_name:       usersTable.name,
-      sender_avatar:     usersTable.avatar_url,
     })
     .from(messagesTable)
     .innerJoin(usersTable, eq(messagesTable.sender_id, usersTable.id))
@@ -359,9 +358,8 @@ router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
       const m = existing[0];
       return res.json({
         ...m,
-        outgoing:      true,
-        sender_name:   req.user!.name,
-        sender_avatar: req.user!.avatar_url,
+        outgoing:    true,
+        sender_name: req.user!.name,
       });
     }
   }
@@ -379,9 +377,8 @@ router.post("/chats/:chatId/messages", async (req: AuthRequest, res) => {
 
   const response = {
     ...msg,
-    outgoing:      true,
-    sender_name:   req.user!.name,
-    sender_avatar: req.user!.avatar_url,
+    outgoing:    true,
+    sender_name: req.user!.name,
   };
 
   res.json(response);

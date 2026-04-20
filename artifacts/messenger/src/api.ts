@@ -64,14 +64,14 @@ export const api = {
       return apiFetch<{
         id: string; content: string; content_type: string; is_deleted: boolean;
         created_at: string; sender_id: string; sender_name: string;
-        sender_avatar: string; outgoing: boolean; client_message_id?: string;
+        outgoing: boolean; client_message_id?: string;
       }[]>(`/chats/${chatId}/messages${query}`);
     },
     sendMessage: (chatId: string, content: string, content_type = "text", client_message_id?: string) =>
       apiFetch<{
         id: string; content: string; content_type: string; is_deleted: boolean;
         created_at: string; sender_id: string; sender_name: string;
-        sender_avatar: string; outgoing: boolean; client_message_id?: string;
+        outgoing: boolean; client_message_id?: string;
       }>(`/chats/${chatId}/messages`, {
         method: "POST",
         body: JSON.stringify({ content, content_type, client_message_id }),

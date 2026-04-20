@@ -22,7 +22,7 @@ interface Message {
   created_at: string;
   sender_id: string;
   sender_name: string;
-  sender_avatar: string;
+  sender_avatar?: string;
   outgoing: boolean;
   client_message_id?: string;
   status?: MsgStatus;
