@@ -97,6 +97,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
   const [toast, setToast] = useState("");
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [sseConnected, setSseConnected] = useState(false);
+  const [msgError, setMsgError] = useState(false);
 
   // Manage members (group + admin only)
   const [showManage, setShowManage] = useState(false);
@@ -147,6 +148,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     try {
       const msgs = await api.chats.messages(id, { limit: PAGE_SIZE });
       setHasMore(msgs.length === PAGE_SIZE);
+      setMsgError(false);
 
       setMessages(prev => {
         // Merge: keep optimistic messages, add server messages
@@ -159,7 +161,9 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
         const other = msgs.find(m => !m.outgoing);
         if (other) { setChatName(other.sender_name); setChatAvatar(other.sender_avatar); }
       }
-    } catch {}
+    } catch {
+      setMsgError(true);
+    }
     finally { if (!opts?.silent) setLoading(false); }
   }, [id, isGroup]);
 
@@ -185,6 +189,7 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
     setLoading(true);
     setMessages([]);
     setSseConnected(false);
+    setMsgError(false);
     loadMessages();
 
     // Connect SSE
@@ -197,6 +202,8 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
+      // Reload messages on (re)connect to recover from any failed initial load
+      loadMessages({ silent: true });
     });
 
     es.addEventListener("message", (e) => {
@@ -717,6 +724,16 @@ export default function ChatView({ id, forceGroup }: ChatViewProps) {
         {loading ? (
           <div className="flex justify-center py-10">
             <div className="w-8 h-8 border-2 border-[#46eedd]/20 border-t-[#46eedd] rounded-full animate-spin" />
+          </div>
+        ) : msgError ? (
+          <div className="flex flex-col items-center py-16 gap-3 text-center">
+            <span className="material-symbols-outlined text-[48px] text-red-400/40">wifi_off</span>
+            <p className="text-[#bacac6]/40 text-[14px]">Не удалось загрузить сообщения</p>
+            <button
+              onClick={() => loadMessages()}
+              className="mt-1 px-4 py-2 rounded-xl text-[13px] font-medium text-[#46eedd] border border-[#46eedd]/30 hover:bg-[#46eedd]/10 transition-all">
+              Попробовать снова
+            </button>
           </div>
         ) : messages.length === 0 ? (
           <div className="flex flex-col items-center py-16 gap-3 text-center">
